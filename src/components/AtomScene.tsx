@@ -16,11 +16,13 @@ export default function AtomScene({
   atomicNumber,
   subshells,
   charge = 0,
+  sharedElectrons = 0,
 }: {
   symbol: string;
   atomicNumber: number;
   subshells: Subshell[];
   charge?: number;
+  sharedElectrons?: number;
 }) {
   let removal = Math.max(0, charge);
   const adjusted = [...subshells].reverse().map((subshell) => {
@@ -49,6 +51,7 @@ export default function AtomScene({
       </g>
       <g className="atom-electrons">
         {electrons.map((electron, electronIndex) => {
+          const isShared = electronIndex >= electrons.length - sharedElectrons;
           const shellElectrons = electrons.filter((item) => item.shell === electron.shell);
           const position = shellElectrons.findIndex(
             (item) => item.label === electron.label && item.index === electron.index,
@@ -58,7 +61,8 @@ export default function AtomScene({
           const x = (center + Math.cos(angle) * radius).toFixed(2);
           const y = (center + Math.sin(angle) * radius).toFixed(2);
           return (
-            <g key={`${electron.label}-${electronIndex}`} transform={`translate(${x} ${y})`}>
+            <g key={`${electron.label}-${electronIndex}`} className={isShared ? "shared-origin" : undefined} transform={`translate(${x} ${y})`}>
+              {isShared && <circle r="7" className="shared-origin-ring" />}
               <circle r="4.6" className="electron-ring" />
               <circle r="3" fill={subshellColors[electron.kind]} />
             </g>

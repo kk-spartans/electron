@@ -249,7 +249,7 @@ export default function Home() {
           }}
           onPointerMove={pointerMove} onPointerUp={() => { gesture.current = null; }}>
           <div className="bond-toolbar">
-            <span><Atom /> Bonds form automatically at stable distance</span>
+            <span><Atom /> Ringed atom electrons appear in shared pairs</span>
             <output className="zoom-level" aria-label="Canvas zoom">{Math.round(scale * 100)}%</output>
           </div>
           <div className="canvas-world">
@@ -257,19 +257,22 @@ export default function Home() {
               {bonds.map((bond) => {
                 const from = atoms.find((atom) => atom.id === bond.from); const to = atoms.find((atom) => atom.id === bond.to); if (!from || !to) return null;
                 const x1=pan.x+from.x*scale,y1=pan.y+from.y*scale,x2=pan.x+to.x*scale,y2=pan.y+to.y*scale,mx=(x1+x2)/2,my=(y1+y2)/2;
-                return <g key={bond.id} className={`bond-line ${bond.type} ${selectedBond === bond.id ? "selected" : ""}`}><line x1={x1} y1={y1} x2={x2} y2={y2} />{bond.order > 1 && <line x1={x1} y1={y1+8*scale} x2={x2} y2={y2+8*scale} />}{bond.type === "covalent" && Array.from({length:bond.order*2},(_,i)=><circle className="shared-electron" key={i} cx={mx+(i%2?5:-5)*scale} cy={my+(Math.floor(i/2)-(bond.order-1)/2)*10*scale} r={3*scale} />)}</g>;
+                const fromSubshells=subshellsForElectronCount(elements[from.element].z-from.charge+from.electronOffset),toSubshells=subshellsForElectronCount(elements[to.element].z-to.charge+to.electronOffset);
+                const fromColor=subshellColors[fromSubshells.at(-1)?.kind ?? "s"],toColor=subshellColors[toSubshells.at(-1)?.kind ?? "s"];
+                return <g key={bond.id} className={`bond-line ${bond.type} ${selectedBond === bond.id ? "selected" : ""}`}><line x1={x1} y1={y1} x2={x2} y2={y2} />{bond.order > 1 && <line x1={x1} y1={y1+8*scale} x2={x2} y2={y2+8*scale} />}{bond.type === "covalent" && Array.from({length:bond.order},(_,i)=><g key={i}><circle className="shared-electron" style={{fill:fromColor}} cx={mx-5*scale} cy={my+(i-(bond.order-1)/2)*10*scale} r={3*scale} /><circle className="shared-electron" style={{fill:toColor}} cx={mx+5*scale} cy={my+(i-(bond.order-1)/2)*10*scale} r={3*scale} /></g>)}</g>;
               })}
             </svg>
             {bonds.map((bond) => { const from=atoms.find((atom)=>atom.id===bond.from),to=atoms.find((atom)=>atom.id===bond.to); if(!from||!to)return null; const mx=pan.x+(from.x+to.x)*scale/2,my=pan.y+(from.y+to.y)*scale/2; return <button key={`target-${bond.id}`} className="bond-target" style={{transform:`translate(${mx-42}px,${my-30}px)`}} aria-label={`Inspect ${bond.type} bond`} onClick={(event)=>{event.stopPropagation();setSelectedBond(bond.id);setSelected([]);}}>{bond.type}</button>;})}
             {namedCompounds.map((compound, index) => <div className="compound-label" key={`${compound.formula}-${index}`} style={{ transform: `translate(${pan.x + compound.x * scale}px, ${pan.y + compound.y * scale}px)` }}><b>{compound.formula}</b><span>{compound.name}</span></div>)}
             {atoms.map((atom) => {
               const item = elements[atom.element]; const isSelected = selected.includes(atom.id);
+              const sharedElectrons=bonds.filter((bond)=>bond.type==="covalent"&&(bond.from===atom.id||bond.to===atom.id)).reduce((total,bond)=>total+bond.order,0);
               const atomSize=200*scale;
               return <button className={`canvas-atom ${isSelected ? "selected" : ""}`} style={{ width:atomSize,height:atomSize,transform:`translate(${pan.x+atom.x*scale-atomSize/2}px, ${pan.y+atom.y*scale-atomSize/2}px)` }} key={atom.id}
                 onClick={(event) => { event.stopPropagation(); selectAtom(atom.id); }}
                 onPointerDown={(event) => { event.stopPropagation(); event.currentTarget.setPointerCapture(event.pointerId); gesture.current = { type: "atom", id: atom.id, sx: event.clientX, sy: event.clientY, ox: atom.x, oy: atom.y }; }}
                 onPointerMove={pointerMove} onPointerUp={() => { const movedId = gesture.current?.id; gesture.current = null; if (movedId) window.setTimeout(() => settleAtom(movedId), 0); }} aria-label={`${item.name} atom`}>
-                <AtomScene symbol={atom.element} atomicNumber={item.z} subshells={subshellsForElectronCount(item.z - atom.charge + atom.electronOffset)} />
+                <AtomScene symbol={atom.element} atomicNumber={item.z} subshells={subshellsForElectronCount(item.z - atom.charge + atom.electronOffset)} sharedElectrons={sharedElectrons} />
                 {atom.charge !== 0 && <span className={`atom-charge ${atom.charge > 0 ? "positive" : "negative"}`}>{atom.charge > 0 ? `+${atom.charge}` : atom.charge}</span>}
               </button>;
             })}
@@ -280,7 +283,7 @@ export default function Home() {
         <aside className="atom-inspector">
           {activeBond ? <BondInspector bond={activeBond} atoms={atoms} onClose={() => setSelectedBond(null)} onRemove={() => { setBonds((items) => items.filter((item) => item.id !== activeBond.id)); setAtoms((items) => items.map((atom) => atom.id === activeBond.from || atom.id === activeBond.to ? {...atom,charge:0}:atom)); setSelectedBond(null); }} /> : active && activeElement ? <>
             <div className="inspector-title"><div><small>Selected atom</small><h1>{activeElement.name}</h1><code>{activeElement.config}</code></div><button aria-label="Deselect atom" onClick={() => setSelected([])}><X /></button></div>
-            <div className="atom-preview"><AtomScene symbol={active.element} atomicNumber={activeElement.z} subshells={activeSubshells} /></div>
+            <div className="atom-preview"><AtomScene symbol={active.element} atomicNumber={activeElement.z} subshells={activeSubshells} sharedElectrons={bondSummary.filter((bond)=>bond.type==="covalent").reduce((total,bond)=>total+bond.order,0)} /></div>
             <section><h2>Occupied subshells</h2><div className="subshell-list">{activeSubshells.map((subshell) => <div key={subshell.label}><i style={{ background: subshellColors[subshell.kind] }} /><b>{subshell.label}</b><span>{subshell.count} electrons</span></div>)}</div></section>
             <section><h2>Why it changes</h2><p>{activeElement.note}</p>{active.charge !== 0 && <p className="change-note">This atom is shown as {active.charge > 0 ? `a ${active.charge}+ cation after losing outer electrons` : `a ${Math.abs(active.charge)}− anion after gaining electrons`}.</p>}</section>
             <section><h2>Connected bonds</h2>{bondSummary.length ? <div className="bond-summary">{bondSummary.map((bond) => <div key={bond.id}><span><i className={bond.type} />{bond.type} bond</span><button aria-label={`Remove ${bond.type} bond`} onClick={() => { setBonds((items) => items.filter((item) => item.id !== bond.id)); setAtoms((items) => items.map((atom) => atom.id === bond.from || atom.id === bond.to ? { ...atom, charge: 0 } : atom)); }}><X /></button></div>)}</div> : <p>No bond. Move this atom close to a compatible atom.</p>}</section>
@@ -295,7 +298,8 @@ export default function Home() {
 
 function BondInspector({bond,atoms,onClose,onRemove}:{bond:BondEdge;atoms:AtomNode[];onClose:()=>void;onRemove:()=>void}) {
   const from=atoms.find((atom)=>atom.id===bond.from)!; const to=atoms.find((atom)=>atom.id===bond.to)!;
+  const fromSubshell=subshellsForElectronCount(elements[from.element].z-from.charge+from.electronOffset).at(-1); const toSubshell=subshellsForElectronCount(elements[to.element].z-to.charge+to.electronOffset).at(-1);
   const metal = new Set(["Na","Fe","Li","K","Mg","Ca","Al"]);
   const donor=metal.has(from.element)?from:to; const receiver=donor===from?to:from;
-  return <div className="bond-inspector"><div className="inspector-title"><div><small>Selected bond</small><h1>{from.element} {bond.type === "ionic" ? "→" : "—"} {to.element}</h1><code>{bond.type} bond</code></div><button onClick={onClose}><X /></button></div><section><h2>Electron behavior</h2>{bond.type === "ionic" ? <p><b>{donor.element}</b> donates an outer electron to <b>{receiver.element}</b>. They become oppositely charged ions held by electrostatic attraction.</p> : bond.type === "covalent" ? <p>The atoms share <b>{bond.order*2} electrons</b>, forming {bond.order === 1 ? "one shared pair" : `${bond.order} shared pairs`}. The paired dots are drawn directly on the bond.</p> : <p>Valence electrons are delocalized across the metal atoms rather than belonging to one pair.</p>}</section><button className="remove-bond" onClick={onRemove}><Trash /> Remove bond</button></div>;
+  return <div className="bond-inspector"><div className="inspector-title"><div><small>Selected bond</small><h1>{from.element} {bond.type === "ionic" ? "→" : "—"} {to.element}</h1><code>{bond.type} bond</code></div><button onClick={onClose}><X /></button></div><section><h2>Electron behavior</h2>{bond.type === "ionic" ? <p><b>{donor.element}</b> donates an outer electron to <b>{receiver.element}</b>. They become oppositely charged ions held by electrostatic attraction.</p> : bond.type === "covalent" ? <><p><b>{from.element}</b> contributes {bond.order} electron{bond.order>1?"s":""} and <b>{to.element}</b> contributes {bond.order}. Together they share <b>{bond.order*2} electrons</b> in {bond.order === 1 ? "one pair" : `${bond.order} pairs`}.</p><div className="bond-contributors"><span><i style={{background:subshellColors[fromSubshell?.kind??"s"]}} />{from.element}: {fromSubshell?.label}</span><span><i style={{background:subshellColors[toSubshell?.kind??"s"]}} />{to.element}: {toSubshell?.label}</span></div><small className="sharing-note">The matching ring on each atom marks the electron used here. Every single bond contains one two-electron pair.</small></> : <p>Valence electrons are delocalized across the metal atoms rather than belonging to one pair.</p>}</section><button className="remove-bond" onClick={onRemove}><Trash /> Remove bond</button></div>;
 }

@@ -83,6 +83,17 @@ const compoundNames: Record<string, { formula: string; name: string; bondUnits: 
   C6H6: { formula: "C₆H₆", name: "benzene", bondUnits: 12 },
 };
 
+const periodicMain: Array<Array<[string,number]>> = [
+  [["H",1],["He",18]],
+  [["Li",1],["Be",2],["B",13],["C",14],["N",15],["O",16],["F",17],["Ne",18]],
+  [["Na",1],["Mg",2],["Al",13],["Si",14],["P",15],["S",16],["Cl",17],["Ar",18]],
+  "K Ca Sc Ti V Cr Mn Fe Co Ni Cu Zn Ga Ge As Se Br Kr".split(" ").map((symbol,index)=>[symbol,index+1] as [string,number]),
+  "Rb Sr Y Zr Nb Mo Tc Ru Rh Pd Ag Cd In Sn Sb Te I Xe".split(" ").map((symbol,index)=>[symbol,index+1] as [string,number]),
+  [["Cs",1],["Ba",2],["La",3],["Hf",4],["Ta",5],["W",6],["Re",7],["Os",8],["Ir",9],["Pt",10],["Au",11],["Hg",12],["Tl",13],["Pb",14],["Bi",15],["Po",16],["At",17],["Rn",18]],
+  [["Fr",1],["Ra",2],["Ac",3],["Rf",4],["Db",5],["Sg",6],["Bh",7],["Hs",8],["Mt",9],["Ds",10],["Rg",11],["Cn",12],["Nh",13],["Fl",14],["Mc",15],["Lv",16],["Ts",17],["Og",18]],
+];
+const periodicFBlock=["Ce Pr Nd Pm Sm Eu Gd Tb Dy Ho Er Tm Yb Lu".split(" "),"Th Pa U Np Pu Am Cm Bk Cf Es Fm Md No Lr".split(" ")];
+
 export default function Home() {
   const [atoms, setAtoms] = useState<AtomNode[]>(initialAtoms);
   const [bonds, setBonds] = useState<BondEdge[]>([{ id: 1, from: 1, to: 2, type: "ionic", order: 1 }]);
@@ -96,6 +107,9 @@ export default function Home() {
   const [formulaInput,setFormulaInput]=useState("");
   const [formulaError,setFormulaError]=useState("");
   const [sidebarWidths,setSidebarWidths]=useState({left:196,right:292});
+  const [periodicOpen,setPeriodicOpen]=useState(false);
+  const [valenceFilter,setValenceFilter]=useState("all");
+  const [characterFilter,setCharacterFilter]=useState("all");
   const nextId = useRef(3);
   const canvasRef = useRef<HTMLElement>(null);
   const gesture = useRef<{ type: "pan" | "atom"; id?: number; sx: number; sy: number; ox: number; oy: number } | null>(null);
@@ -192,6 +206,20 @@ export default function Home() {
     setAtoms((items)=>[...items,...charged]);setBonds((items)=>[...items,...createdBonds]);setSelected([ids[centralIndex]]);setSelectedBond(null);setFormulaOpen(false);setFormulaInput("");setFormulaError("");
   }
 
+  function periodicMatch(symbol:string){
+    const valenceMatches=valenceFilter==="all"||elements[symbol].valence===Number(valenceFilter);
+    const en=pauling(symbol);
+    const characterMatches=characterFilter==="all"||(characterFilter==="electronegative"&&en>=2.5)||(characterFilter==="intermediate"&&en>1.5&&en<2.5)||(characterFilter==="electropositive"&&en>0&&en<=1.5);
+    return valenceMatches&&characterMatches;
+  }
+
+  function dropPeriodicAtom(event:React.DragEvent,symbol:string){
+    const box=canvasRef.current?.getBoundingClientRect();
+    if(!box||event.clientX<box.left||event.clientX>box.right||event.clientY<box.top||event.clientY>box.bottom)return;
+    addAtom(symbol,(event.clientX-box.left-pan.x)/scale,(event.clientY-box.top-pan.y)/scale);
+    setPeriodicOpen(false);
+  }
+
   function stableBond(first: ElementKey, second: ElementKey): { type: BondType; order: 1 | 2 | 3 } | null {
     const noble = new Set(["He","Ne","Ar","Kr","Xe","Rn","Og"]);
     if (noble.has(first) || noble.has(second)) return null;
@@ -274,6 +302,7 @@ export default function Home() {
       <div className="lab-layout" style={{"--left-width":`${sidebarWidths.left}px`,"--right-width":`${sidebarWidths.right}px`} as React.CSSProperties}>
         <aside className="element-tray">
           <div className="product-mark"><span><Atom weight="bold" /></span><b>Electron</b></div>
+          <button className="open-periodic" onClick={()=>setPeriodicOpen(true)}><Atom/> Periodic table</button>
           <div className="tray-heading"><b>Add atoms</b><small>Click or drag onto canvas</small></div>
           <label className="element-search"><MagnifyingGlass /><input value={elementQuery} onChange={(event) => setElementQuery(event.target.value)} placeholder="Search 118 elements" aria-label="Search elements" /></label>
           <div className="element-palette">
@@ -348,6 +377,7 @@ export default function Home() {
         </aside>
         <div className="sidebar-resizer right" role="separator" aria-label="Resize information sidebar" aria-orientation="vertical" aria-valuenow={sidebarWidths.right} onPointerDown={(event)=>{event.currentTarget.setPointerCapture(event.pointerId);resizing.current={side:"right",startX:event.clientX,startWidth:sidebarWidths.right};}} onPointerMove={(event)=>{const current=resizing.current;if(!current||current.side!=="right")return;setSidebarWidths((widths)=>({...widths,right:Math.max(220,Math.min(460,current.startWidth-event.clientX+current.startX))}));}} onPointerUp={()=>{resizing.current=null;}}/>
       </div>
+      {periodicOpen&&<div className="periodic-backdrop" onPointerDown={()=>setPeriodicOpen(false)}><section className="periodic-panel" role="dialog" aria-modal="true" aria-label="Periodic table" onPointerDown={(event)=>event.stopPropagation()}><header><div><small>Element library</small><h1>Periodic table</h1></div><div className="periodic-filters"><label>Valence<select value={valenceFilter} onChange={(event)=>setValenceFilter(event.target.value)}><option value="all">All</option>{Array.from({length:8},(_,index)=><option key={index+1} value={index+1}>{index+1} electron{index===0?"":"s"}</option>)}</select></label><label>Character<select value={characterFilter} onChange={(event)=>setCharacterFilter(event.target.value)}><option value="all">All</option><option value="electronegative">Electronegative</option><option value="intermediate">Intermediate</option><option value="electropositive">Electropositive</option></select></label></div><button aria-label="Close periodic table" onClick={()=>setPeriodicOpen(false)}><X/></button></header><div className="periodic-grid">{periodicMain.flatMap((row,rowIndex)=>row.map(([symbol,column])=>{const item=elements[symbol],matches=periodicMatch(symbol);return <button key={symbol} className={matches?"":"filtered"} disabled={!matches} draggable={matches} style={{gridColumn:column,gridRow:rowIndex+1}} onDragStart={(event)=>{event.dataTransfer.setData("element",symbol);event.dataTransfer.effectAllowed="copy";}} onDragEnd={(event)=>dropPeriodicAtom(event,symbol)} onClick={()=>{addAtom(symbol);setPeriodicOpen(false);}}><small>{item.z}</small><b>{symbol}</b><span>{item.name}</span><i>{item.valence}v · {pauling(symbol)||"—"} EN</i></button>}))}{periodicFBlock.flatMap((row,rowIndex)=>row.map((symbol,index)=>{const item=elements[symbol],matches=periodicMatch(symbol);return <button key={symbol} className={matches?"f-block":"f-block filtered"} disabled={!matches} draggable={matches} style={{gridColumn:index+4,gridRow:rowIndex+8}} onDragStart={(event)=>event.dataTransfer.setData("element",symbol)} onDragEnd={(event)=>dropPeriodicAtom(event,symbol)} onClick={()=>{addAtom(symbol);setPeriodicOpen(false);}}><small>{item.z}</small><b>{symbol}</b><span>{item.name}</span><i>{item.valence}v · {pauling(symbol)||"—"} EN</i></button>}))}</div></section></div>}
       {formulaOpen&&<div className="formula-command-backdrop" onPointerDown={()=>setFormulaOpen(false)}><form className="formula-command" role="dialog" aria-modal="true" aria-label="Create molecule from formula" onPointerDown={(event)=>event.stopPropagation()} onSubmit={(event)=>{event.preventDefault();spawnFormula(formulaInput);}}><label><span>Chemical formula</span><input autoFocus value={formulaInput} onChange={(event)=>{setFormulaInput(event.target.value);setFormulaError("");}} spellCheck={false} autoComplete="off" placeholder="H2O"/></label>{formulaError&&<p role="alert">{formulaError}</p>}<button type="submit">Create molecule</button></form></div>}
     </main>
   );

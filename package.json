@@ -1,0 +1,34 @@
+{
+  "name": "chemistry-visualizer",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "oxlint .",
+    "format": "oxfmt --write .",
+    "format:check": "oxfmt --check ."
+  },
+  "dependencies": {
+    "@phosphor-icons/react": "^2.1.10",
+    "@react-three/drei": "^10.7.7",
+    "@react-three/fiber": "^9.6.1",
+    "next": "16.2.10",
+    "react": "19.2.4",
+    "react-dom": "19.2.4",
+    "three": "^0.185.1"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4",
+    "@types/node": "^20",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "@types/three": "^0.185.1",
+    "babel-plugin-react-compiler": "1.0.0",
+    "oxfmt": "^0.59.0",
+    "oxlint": "^1.74.0",
+    "tailwindcss": "^4",
+    "typescript": "^5"
+  }
+}

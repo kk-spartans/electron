@@ -17,12 +17,14 @@ export default function AtomScene({
   subshells,
   charge = 0,
   sharedElectrons = 0,
+  sharedFrom = [],
 }: {
   symbol: string;
   atomicNumber: number;
   subshells: Subshell[];
   charge?: number;
   sharedElectrons?: number;
+  sharedFrom?: Array<{ color: string; label: string }>;
 }) {
   let removal = Math.max(0, charge);
   const adjusted = [...subshells].reverse().map((subshell) => {
@@ -56,7 +58,8 @@ export default function AtomScene({
           const position = shellElectrons.findIndex(
             (item) => item.label === electron.label && item.index === electron.index,
           );
-          const angle = -Math.PI / 2 + (position * Math.PI * 2) / shellElectrons.length;
+          const displayedShellCount = shellElectrons.length + (electron.shell === shells ? sharedFrom.length : 0);
+          const angle = -Math.PI / 2 + (position * Math.PI * 2) / displayedShellCount;
           const radius = radii[electron.shell - 1];
           const x = (center + Math.cos(angle) * radius).toFixed(2);
           const y = (center + Math.sin(angle) * radius).toFixed(2);
@@ -67,6 +70,18 @@ export default function AtomScene({
               <circle r="3" fill={subshellColors[electron.kind]} />
             </g>
           );
+        })}
+        {sharedFrom.map((source, index) => {
+          const outerElectrons = electrons.filter((electron) => electron.shell === shells).length;
+          const angle = -Math.PI / 2 + ((outerElectrons + index) * Math.PI * 2) / (outerElectrons + sharedFrom.length);
+          const radius = radii[shells - 1];
+          const x = (center + Math.cos(angle) * radius).toFixed(2);
+          const y = (center + Math.sin(angle) * radius).toFixed(2);
+          return <g key={`shared-from-${index}`} className="shared-received" transform={`translate(${x} ${y})`}>
+            <circle r="6.5" className="shared-received-ring" />
+            <circle r="3" fill={source.color} />
+            <title>{`Shared from ${source.label}`}</title>
+          </g>;
         })}
       </g>
       <g className="atom-nucleus">

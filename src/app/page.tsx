@@ -92,9 +92,14 @@ export default function Home() {
   const [elementQuery, setElementQuery] = useState("");
   const [selectedBond, setSelectedBond] = useState<number | null>(null);
   const [selectedElectron, setSelectedElectron] = useState<{ atomId: number; label: string; kind: "s"|"p"|"d"|"f"; shared: boolean; source?: string } | null>(null);
+  const [formulaOpen,setFormulaOpen]=useState(false);
+  const [formulaInput,setFormulaInput]=useState("");
+  const [formulaError,setFormulaError]=useState("");
+  const [sidebarWidths,setSidebarWidths]=useState({left:196,right:292});
   const nextId = useRef(3);
   const canvasRef = useRef<HTMLElement>(null);
   const gesture = useRef<{ type: "pan" | "atom"; id?: number; sx: number; sy: number; ox: number; oy: number } | null>(null);
+  const resizing=useRef<{side:"left"|"right";startX:number;startWidth:number}|null>(null);
   const active = atoms.find((atom) => atom.id === selected[selected.length - 1]);
   const activeElement = active ? elements[active.element] : null;
   const activeSubshells = active && activeElement ? subshellsForElectronCount(activeElement.z - active.charge + active.electronOffset) : [];
@@ -134,6 +139,18 @@ export default function Home() {
     return () => canvas.removeEventListener("wheel", handleWheel);
   }, [pan, scale]);
 
+  useEffect(()=>{
+    const handleKey=(event:KeyboardEvent)=>{
+      const target=event.target as HTMLElement;
+      const isField=target instanceof HTMLInputElement||target instanceof HTMLTextAreaElement||target.isContentEditable;
+      if(event.ctrlKey&&event.shiftKey&&event.key.toLowerCase()==="p"){event.preventDefault();setFormulaOpen(true);setFormulaError("");return;}
+      if(event.key==="Escape"&&formulaOpen){setFormulaOpen(false);setFormulaInput("");setFormulaError("");return;}
+      if(event.key==="Delete"&&!isField&&active){event.preventDefault();deleteAtom(active.id);}
+    };
+    window.addEventListener("keydown",handleKey);
+    return()=>window.removeEventListener("keydown",handleKey);
+  },[active,formulaOpen]);
+
   function addAtom(element: ElementKey, x?: number, y?: number) {
     const id = nextId.current++;
     const centerX = ((canvasRef.current?.clientWidth ?? 960) / 2 - pan.x) / scale;
@@ -146,6 +163,33 @@ export default function Home() {
     setSelectedBond(null);
     setSelectedElectron((current)=>current?.atomId===id?current:null);
     setSelected([id]);
+  }
+
+  function deleteAtom(id:number){
+    setAtoms((items)=>items.filter((atom)=>atom.id!==id));
+    setBonds((items)=>items.filter((bond)=>bond.from!==id&&bond.to!==id));
+    setSelected((items)=>items.filter((item)=>item!==id));
+    setSelectedElectron((current)=>current?.atomId===id?null:current);
+  }
+
+  function spawnFormula(formula:string){
+    const matches=[...formula.matchAll(/([A-Z][a-z]?)(\d*)/g)];
+    if(!formula||matches.map((match)=>match[0]).join("")!==formula){setFormulaError("Enter a valid chemical formula.");return;}
+    const symbols=matches.flatMap((match)=>{const symbol=match[1];const count=match[2]?Number(match[2]):1;if(!(symbol in elements)||!Number.isInteger(count)||count<1||count>20)return[];return Array.from({length:count},()=>symbol);});
+    const expected=matches.reduce((sum,match)=>sum+(match[2]?Number(match[2]):1),0);
+    if(symbols.length!==expected||symbols.length>24){setFormulaError("That formula is unsupported or too large for the canvas.");return;}
+    const centerX=((canvasRef.current?.clientWidth??960)/2-pan.x)/scale,centerY=((canvasRef.current?.clientHeight??620)/2-pan.y)/scale;
+    const capacity=(symbol:string)=>symbol==="H"||["F","Cl","Br","I"].includes(symbol)?1:symbol==="Be"?2:symbol==="B"||symbol==="N"?3:symbol==="O"?2:symbol==="C"?4:symbol==="P"?5:symbol==="S"?6:8;
+    const frequencies=symbols.reduce<Record<string,number>>((result,symbol)=>({...result,[symbol]:(result[symbol]??0)+1}),{});
+    const candidates=symbols.map((symbol,index)=>({symbol,index})).filter(({symbol})=>symbol!=="H");
+    const centralIndex=symbols.length===1?0:(candidates.sort((a,b)=>frequencies[a.symbol]-frequencies[b.symbol]||capacity(b.symbol)-capacity(a.symbol)||a.index-b.index)[0]?.index??0);
+    const ids=symbols.map(()=>nextId.current++);
+    const outer=symbols.map((_,index)=>index).filter((index)=>index!==centralIndex);
+    const created=symbols.map((element,index)=>{if(index===centralIndex)return{id:ids[index],element,x:centerX,y:centerY,charge:0,electronOffset:0};const position=outer.indexOf(index),angle=-Math.PI/2+position*Math.PI*2/outer.length;return{id:ids[index],element,x:centerX+Math.cos(angle)*230,y:centerY+Math.sin(angle)*230,charge:0,electronOffset:0};});
+    const metals=new Set("Li Be Na Mg Al K Ca Sc Ti V Cr Mn Fe Co Ni Cu Zn Ga Rb Sr Y Zr Nb Mo Tc Ru Rh Pd Ag Cd In Sn Cs Ba".split(" "));
+    const createdBonds:BondEdge[]=outer.flatMap((index,position)=>{const inferred=stableBond(symbols[centralIndex],symbols[index]);if(!inferred)return[];const order=formula==="CO"?3:inferred.order;return[{id:Date.now()+position,from:ids[centralIndex],to:ids[index],type:inferred.type,order:order as 1|2|3}];});
+    const charged=created.map((atom)=>createdBonds.some((bond)=>bond.type==="ionic"&&(bond.from===atom.id||bond.to===atom.id))?{...atom,charge:metals.has(atom.element)?1:-1}:atom);
+    setAtoms((items)=>[...items,...charged]);setBonds((items)=>[...items,...createdBonds]);setSelected([ids[centralIndex]]);setSelectedBond(null);setFormulaOpen(false);setFormulaInput("");setFormulaError("");
   }
 
   function stableBond(first: ElementKey, second: ElementKey): { type: BondType; order: 1 | 2 | 3 } | null {
@@ -227,7 +271,7 @@ export default function Home() {
 
   return (
     <main className="lab-shell">
-      <div className="lab-layout">
+      <div className="lab-layout" style={{"--left-width":`${sidebarWidths.left}px`,"--right-width":`${sidebarWidths.right}px`} as React.CSSProperties}>
         <aside className="element-tray">
           <div className="product-mark"><span><Atom weight="bold" /></span><b>Electron</b></div>
           <div className="tray-heading"><b>Add atoms</b><small>Click or drag onto canvas</small></div>
@@ -239,6 +283,7 @@ export default function Home() {
             })}
           </div>
         </aside>
+        <div className="sidebar-resizer left" role="separator" aria-label="Resize element sidebar" aria-orientation="vertical" aria-valuenow={sidebarWidths.left} onPointerDown={(event)=>{event.currentTarget.setPointerCapture(event.pointerId);resizing.current={side:"left",startX:event.clientX,startWidth:sidebarWidths.left};}} onPointerMove={(event)=>{const current=resizing.current;if(!current||current.side!=="left")return;setSidebarWidths((widths)=>({...widths,left:Math.max(140,Math.min(360,current.startWidth+event.clientX-current.startX))}));}} onPointerUp={()=>{resizing.current=null;}}/>
 
         <section ref={canvasRef} className="chem-canvas" aria-label="Interactive atom canvas"
           onDragOver={(event) => event.preventDefault()}
@@ -301,7 +346,9 @@ export default function Home() {
             <section><h2>Connected bonds</h2>{bondSummary.length ? <div className="bond-summary">{bondSummary.map((bond) => <div key={bond.id}><span><i className={bond.type} />{bond.type} bond</span><button aria-label={`Remove ${bond.type} bond`} onClick={() => { setBonds((items) => items.filter((item) => item.id !== bond.id)); setAtoms((items) => items.map((atom) => atom.id === bond.from || atom.id === bond.to ? { ...atom, charge: 0 } : atom)); }}><X /></button></div>)}</div> : <p>No bond. Move this atom close to a compatible atom.</p>}</section>
           </> : <div className="inspector-empty"><Atom /><b>Select an atom</b><span>Its configuration, subshells, charge, and bonds will appear here.</span></div>}
         </aside>
+        <div className="sidebar-resizer right" role="separator" aria-label="Resize information sidebar" aria-orientation="vertical" aria-valuenow={sidebarWidths.right} onPointerDown={(event)=>{event.currentTarget.setPointerCapture(event.pointerId);resizing.current={side:"right",startX:event.clientX,startWidth:sidebarWidths.right};}} onPointerMove={(event)=>{const current=resizing.current;if(!current||current.side!=="right")return;setSidebarWidths((widths)=>({...widths,right:Math.max(220,Math.min(460,current.startWidth-event.clientX+current.startX))}));}} onPointerUp={()=>{resizing.current=null;}}/>
       </div>
+      {formulaOpen&&<div className="formula-command-backdrop" onPointerDown={()=>setFormulaOpen(false)}><form className="formula-command" role="dialog" aria-modal="true" aria-label="Create molecule from formula" onPointerDown={(event)=>event.stopPropagation()} onSubmit={(event)=>{event.preventDefault();spawnFormula(formulaInput);}}><label><span>Chemical formula</span><input autoFocus value={formulaInput} onChange={(event)=>{setFormulaInput(event.target.value);setFormulaError("");}} spellCheck={false} autoComplete="off" placeholder="H2O"/></label>{formulaError&&<p role="alert">{formulaError}</p>}<button type="submit">Create molecule</button></form></div>}
     </main>
   );
 }
@@ -339,9 +386,11 @@ function AtomLearning({atom,atoms,bonds}:{atom:AtomNode;atoms:AtomNode[];bonds:B
   else if(domains===5){geometry="Trigonal bipyramidal electron geometry";angle="90° and 120°";}
   else if(domains>=6){geometry="Octahedral electron geometry";angle="90°";}
   const shellTarget=atom.element==="H"||atom.element==="He"?2:8;
-  const shellCount=ownedValence+bondOrder;
+  const ionicShells=subshellsForElectronCount(data.z-atom.charge+atom.electronOffset),outerShell=ionicShells.at(-1)?.shell??1;
+  const ionicOuterCount=ionicShells.filter((subshell)=>subshell.shell===outerShell).reduce((sum,subshell)=>sum+subshell.count,0);
+  const shellCount=atom.charge!==0&&connected.some((bond)=>bond.type==="ionic")?ionicOuterCount:ownedValence+bondOrder;
   const exception=atom.element==="H"||atom.element==="He"?"First-shell duet rule":atom.element==="Be"||atom.element==="B"?"Stable electron-deficient structures are possible":shellCount>8&&elements[atom.element].subshells.some((item)=>item.shell>=3)?"Expanded valence shell is possible for some period-3-and-beyond compounds":unpaired?"An unpaired electron makes this a radical-like arrangement":null;
-  const stable=connected.length===0?{tone:"neutral",title:"Unbonded",text:"Move the atom near compatible partners to test a structure."}:shellCount===shellTarget||Boolean(exception)?{tone:"good",title:"Locally satisfied",text:`The displayed valence shell has ${shellCount} electrons when shared electrons are counted.`}:shellCount<shellTarget?{tone:"warn",title:"Incomplete valence shell",text:`This arrangement shows ${shellCount} of the usual ${shellTarget} valence-shell electrons.`}:{tone:"warn",title:"Check this structure",text:`The displayed shell has ${shellCount} electrons, above the usual ${shellTarget}.`};
+  const stable=connected.length===0?{tone:"neutral",title:"Unbonded",text:"Move the atom near compatible partners to test a structure."}:shellCount===shellTarget||Boolean(exception)?{tone:"good",title:"Locally satisfied",text:atom.charge!==0?`After electron transfer, the ion’s outer occupied shell contains ${shellCount} electrons.`:`The displayed valence shell has ${shellCount} electrons when shared electrons are counted.`}:shellCount<shellTarget?{tone:"warn",title:"Incomplete valence shell",text:`This arrangement shows ${shellCount} of the usual ${shellTarget} valence-shell electrons.`}:{tone:"warn",title:"Check this structure",text:`The displayed shell has ${shellCount} electrons, above the usual ${shellTarget}.`};
   const componentIds=new Set<number>(),stack=[atom.id];
   while(stack.length){const id=stack.pop()!;if(componentIds.has(id))continue;componentIds.add(id);bonds.filter((bond)=>bond.from===id||bond.to===id).forEach((bond)=>stack.push(bond.from===id?bond.to:bond.from));}
   const counts=[...componentIds].map((id)=>atoms.find((item)=>item.id===id)!).reduce<Record<string,number>>((result,item)=>({...result,[item.element]:(result[item.element]??0)+1}),{});

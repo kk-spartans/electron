@@ -178,15 +178,15 @@ export default function Home() {
         return Boolean(other && Math.hypot(other.x - moved.x, other.y - moved.y) <= 310);
       });
       const existingPartners = new Set(kept.flatMap((bond) => bond.from === id ? [bond.to] : bond.to === id ? [bond.from] : []));
-      const proposed = nearby.filter(({atom}) => !existingPartners.has(atom.id)).map(({atom}) => ({ atom, inferred: stableBond(moved.element, atom.element) })).filter((item): item is {atom:AtomNode;inferred:{type:BondType;order:1|2|3}} => Boolean(item.inferred));
+      const proposed = nearby.filter(({atom}) => !existingPartners.has(atom.id)).map(({atom,distance}) => ({ atom, distance, inferred: stableBond(moved.element, atom.element) })).filter((item): item is {atom:AtomNode;distance:number;inferred:{type:BondType;order:1|2|3}} => Boolean(item.inferred)).sort((a,b)=>Number(a.atom.element===moved.element)-Number(b.atom.element===moved.element)||a.distance-b.distance);
       if (!proposed.length) return kept;
       const capacity = (atom: AtomNode) => atom.element === "H" || ["F","Cl","Br","I"].includes(atom.element) ? 1 : atom.element === "O" ? 2 : atom.element === "N" ? 3 : atom.element === "C" ? 4 : 8;
       const used = (atomId: number) => kept.filter((bond) => bond.from === atomId || bond.to === atomId).reduce((total,bond) => total+bond.order,0);
-      const movedDemand = proposed.reduce((total,item) => total+item.inferred.order,0);
-      const allFit = used(id)+movedDemand <= capacity(moved) && proposed.every(({atom,inferred}) => used(atom.id)+inferred.order <= capacity(atom));
-      if (!allFit) return kept;
+      let remaining=capacity(moved)-used(id);
+      const accepted=proposed.filter(({atom,inferred})=>{if(inferred.order>remaining||used(atom.id)+inferred.order>capacity(atom))return false;remaining-=inferred.order;return true;});
+      if (!accepted.length) return kept;
       const now=Date.now();
-      return [...kept,...proposed.map(({atom,inferred},index)=>({id:now+index,from:id,to:atom.id,...inferred}))];
+      return [...kept,...accepted.map(({atom,inferred},index)=>({id:now+index,from:id,to:atom.id,...inferred}))];
     });
 
     if (nearby.length === 1) {
@@ -251,7 +251,7 @@ export default function Home() {
           onDrop={(event) => { const symbol = event.dataTransfer.getData("element") as ElementKey; const box = event.currentTarget.getBoundingClientRect(); if (symbol in elements) addAtom(symbol, (event.clientX - box.left - pan.x) / scale, (event.clientY - box.top - pan.y) / scale); }}
           onPointerDown={(event) => {
             const target = event.target as Element;
-            if (!target.closest(".canvas-atom, .bond-toolbar, .bond-target")) {
+            if (!target.closest(".canvas-atom, .canvas-atom-controls, .bond-toolbar, .bond-target")) {
               event.currentTarget.setPointerCapture(event.pointerId);
               gesture.current = { type: "pan", sx: event.clientX, sy: event.clientY, ox: pan.x, oy: pan.y };
             }
@@ -286,6 +286,12 @@ export default function Home() {
                 {atom.charge !== 0 && <span className={`atom-charge ${atom.charge > 0 ? "positive" : "negative"}`}>{atom.charge > 0 ? `+${atom.charge}` : atom.charge}</span>}
               </button>;
             })}
+            {active && activeElement && <div className="canvas-atom-controls" style={{transform:`translate(${pan.x+active.x*scale-116}px,${pan.y+active.y*scale-100*scale-48}px)`}} onPointerDown={(event)=>event.stopPropagation()} onClick={(event)=>event.stopPropagation()}>
+              <button aria-label="Remove electron" title={bondSummary.length?"Remove bonds before changing electrons":"Remove electron"} disabled={bondSummary.length>0||activeElement.z-active.charge+active.electronOffset<=0} onClick={()=>setAtoms((items)=>items.map((atom)=>atom.id===active.id?{...atom,electronOffset:Math.max(-(activeElement.z-active.charge),atom.electronOffset-1)}:atom))}>−</button>
+              <label><span>e⁻</span><input aria-label="Electron count" type="number" min="0" max="118" value={activeElement.z-active.charge+active.electronOffset} disabled={bondSummary.length>0} onChange={(event)=>{const count=Math.max(0,Math.min(118,Number(event.target.value)||0));setAtoms((items)=>items.map((atom)=>atom.id===active.id?{...atom,electronOffset:count-(activeElement.z-active.charge)}:atom));}} /></label>
+              <button aria-label="Add electron" title={bondSummary.length?"Remove bonds before changing electrons":"Add electron"} disabled={bondSummary.length>0||activeElement.z-active.charge+active.electronOffset>=118} onClick={()=>setAtoms((items)=>items.map((atom)=>atom.id===active.id?{...atom,electronOffset:Math.min(118-(activeElement.z-active.charge),atom.electronOffset+1)}:atom))}>+</button>
+              <button className="canvas-delete" aria-label="Delete atom" onClick={()=>{setAtoms((items)=>items.filter((atom)=>atom.id!==active.id));setBonds((items)=>items.filter((bond)=>bond.from!==active.id&&bond.to!==active.id));setSelected([]);}}><Trash /></button>
+            </div>}
           </div>
           {atoms.length === 0 && <div className="canvas-empty"><Atom /><b>Place your first atom</b><span>Choose an element from the tray or drag it here.</span></div>}
         </section>
@@ -293,8 +299,6 @@ export default function Home() {
         <aside className="atom-inspector">
           {activeBond ? <BondInspector bond={activeBond} atoms={atoms} onClose={() => setSelectedBond(null)} onRemove={() => { setBonds((items) => items.filter((item) => item.id !== activeBond.id)); setAtoms((items) => items.map((atom) => atom.id === activeBond.from || atom.id === activeBond.to ? {...atom,charge:0}:atom)); setSelectedBond(null); }} /> : active && activeElement ? <>
             <div className="inspector-title"><div><small>Selected atom</small><h1>{activeElement.name}</h1><code>{activeElement.config}</code></div><button aria-label="Deselect atom" onClick={() => setSelected([])}><X /></button></div>
-            <div className="atom-controls"><div className="electron-control-row"><button disabled={bondSummary.length>0||activeElement.z-active.charge+active.electronOffset<=0} onClick={() => setAtoms((items) => items.map((atom) => atom.id === active.id ? {...atom,electronOffset:Math.max(-(activeElement.z-active.charge),atom.electronOffset-1)}:atom))}>−</button><label><span>Electrons</span><input type="number" min="0" max="118" value={activeElement.z-active.charge+active.electronOffset} disabled={bondSummary.length>0} onChange={(event)=>{const count=Math.max(0,Math.min(118,Number(event.target.value)||0));setAtoms((items)=>items.map((atom)=>atom.id===active.id?{...atom,electronOffset:count-(activeElement.z-active.charge)}:atom));}} /></label><button disabled={bondSummary.length>0||activeElement.z-active.charge+active.electronOffset>=118} onClick={() => setAtoms((items) => items.map((atom) => atom.id === active.id ? {...atom,electronOffset:Math.min(118-(activeElement.z-active.charge),atom.electronOffset+1)}:atom))}>+</button></div>{bondSummary.length>0&&<small>Remove bonds before changing electrons.</small>}<button className="delete-atom" onClick={() => { setAtoms((items) => items.filter((atom) => atom.id !== active.id)); setBonds((items) => items.filter((bond) => bond.from !== active.id && bond.to !== active.id)); setSelected([]); }}><Trash /> Delete atom</button></div>
-            <div className="atom-preview"><AtomScene symbol={active.element} atomicNumber={activeElement.z} subshells={activeSubshells} sharedElectrons={bondSummary.filter((bond)=>bond.type==="covalent").reduce((total,bond)=>total+bond.order,0)} sharedFrom={bondSummary.filter((bond)=>bond.type==="covalent").flatMap((bond)=>{const partner=atoms.find((atom)=>atom.id===(bond.from===active.id?bond.to:bond.from));if(!partner)return[];const subshell=subshellsForElectronCount(elements[partner.element].z-partner.charge+partner.electronOffset).at(-1);return Array.from({length:bond.order},()=>({color:subshellColors[subshell?.kind??"s"],label:partner.element}));})} /></div>
             <section><h2>Occupied subshells by shell</h2><div className="shell-groups">{[...new Set(activeSubshells.map((subshell)=>subshell.shell))].map((shell)=>{const shellSubshells=activeSubshells.filter((subshell)=>subshell.shell===shell);const total=shellSubshells.reduce((sum,subshell)=>sum+subshell.count,0);const shared=shell===Math.max(...activeSubshells.map((subshell)=>subshell.shell))?bondSummary.filter((bond)=>bond.type==="covalent").reduce((sum,bond)=>sum+bond.order,0):0;return <div className="shell-group" key={shell}><div className="shell-total"><b>Shell {shell}</b><span>{total} owned electron{total===1?"":"s"}{shared>0&&<em> + {shared} shared</em>}</span></div><div className="subshell-list">{shellSubshells.map((subshell)=><div key={subshell.label}><i style={{background:subshellColors[subshell.kind]}}/><b>{subshell.label}</b><span>{subshell.count} electrons</span></div>)}</div></div>;})}</div></section>
             <section><h2>Why it changes</h2><p>{activeElement.note}</p>{active.charge !== 0 && <p className="change-note">This atom is shown as {active.charge > 0 ? `a ${active.charge}+ cation after losing outer electrons` : `a ${Math.abs(active.charge)}− anion after gaining electrons`}.</p>}</section>
             <section><h2>Connected bonds</h2>{bondSummary.length ? <div className="bond-summary">{bondSummary.map((bond) => <div key={bond.id}><span><i className={bond.type} />{bond.type} bond</span><button aria-label={`Remove ${bond.type} bond`} onClick={() => { setBonds((items) => items.filter((item) => item.id !== bond.id)); setAtoms((items) => items.map((atom) => atom.id === bond.from || atom.id === bond.to ? { ...atom, charge: 0 } : atom)); }}><X /></button></div>)}</div> : <p>No bond. Move this atom close to a compatible atom.</p>}</section>

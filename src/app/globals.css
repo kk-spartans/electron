@@ -55,6 +55,7 @@ button { color:inherit; font:inherit; }
 .bond-line text { fill:#c7d0c9; paint-order:stroke; stroke:#0d110e; stroke-width:5px; font:9px var(--font-geist-mono); text-anchor:middle; }
 .shared-electron { fill:var(--cyan); stroke:#0d110e; stroke-width:1.5; pointer-events:none; }
 .bond-target { position:absolute; left:0; top:0; width:84px; height:28px; z-index:3; border:0; background:transparent; color:#c7d0c9; font:9px var(--font-geist-mono); cursor:pointer; text-shadow:0 1px 3px #000; }.bond-target:hover,.bond-target:focus-visible { color:var(--accent); outline:1px solid var(--line); border-radius:6px; background:#111611cc; }
+.compound-label { position:absolute; left:0; top:0; z-index:2; display:grid; justify-items:center; gap:2px; width:150px; margin-left:-75px; padding:7px 10px; border:1px solid var(--line); border-radius:8px; background:#111611e8; pointer-events:none; box-shadow:0 8px 24px #0005; }.compound-label b { color:var(--accent); font:12px var(--font-geist-mono); }.compound-label span { color:#c4cec6; font-size:10px; }
 .canvas-atom { position:absolute; left:0; top:0; width:200px; height:200px; padding:0; border:0; background:transparent; cursor:move; border-radius:50%; transition:filter .18s ease; }
 .canvas-atom:hover { filter:brightness(1.15); }
 .canvas-atom.selected { outline:1px solid var(--accent); outline-offset:4px; }

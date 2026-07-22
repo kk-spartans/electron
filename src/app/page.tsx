@@ -69,6 +69,21 @@ const initialAtoms: AtomNode[] = [
   { id: 2, element: "Cl", x: 490, y: 310, charge: -1, electronOffset: 0 },
 ];
 
+const compoundNames: Record<string, { formula: string; name: string }> = {
+  ClNa: { formula: "NaCl", name: "sodium chloride" }, CO2: { formula: "CO₂", name: "carbon dioxide" },
+  H2O: { formula: "H₂O", name: "water" }, CH4: { formula: "CH₄", name: "methane" },
+  H3N: { formula: "NH₃", name: "ammonia" }, ClH: { formula: "HCl", name: "hydrogen chloride" },
+  CO: { formula: "CO", name: "carbon monoxide" }, O2: { formula: "O₂", name: "oxygen" },
+  N2: { formula: "N₂", name: "nitrogen" }, H2: { formula: "H₂", name: "hydrogen" },
+  Cl2: { formula: "Cl₂", name: "chlorine" }, C2H6: { formula: "C₂H₆", name: "ethane" },
+  C2H4: { formula: "C₂H₄", name: "ethene" }, C2H2: { formula: "C₂H₂", name: "ethyne" },
+  H2O2: { formula: "H₂O₂", name: "hydrogen peroxide" }, O3: { formula: "O₃", name: "ozone" },
+  O2S: { formula: "SO₂", name: "sulfur dioxide" }, O3S: { formula: "SO₃", name: "sulfur trioxide" },
+  CaCl2: { formula: "CaCl₂", name: "calcium chloride" }, Cl2Mg: { formula: "MgCl₂", name: "magnesium chloride" },
+  Fe2O3: { formula: "Fe₂O₃", name: "iron(III) oxide" }, Na2O: { formula: "Na₂O", name: "sodium oxide" },
+  C6H6: { formula: "C₆H₆", name: "benzene" },
+};
+
 export default function Home() {
   const [atoms, setAtoms] = useState<AtomNode[]>(initialAtoms);
   const [bonds, setBonds] = useState<BondEdge[]>([{ id: 1, from: 1, to: 2, type: "ionic", order: 1 }]);
@@ -90,6 +105,23 @@ export default function Home() {
     if (!active) return [];
     return bonds.filter((bond) => bond.from === active.id || bond.to === active.id);
   }, [active, bonds]);
+
+  const namedCompounds = useMemo(() => {
+    const adjacency = new Map<number, number[]>();
+    bonds.forEach((bond) => { adjacency.set(bond.from, [...(adjacency.get(bond.from) ?? []), bond.to]); adjacency.set(bond.to, [...(adjacency.get(bond.to) ?? []), bond.from]); });
+    const visited = new Set<number>();
+    return atoms.flatMap((start) => {
+      if (visited.has(start.id) || !adjacency.has(start.id)) return [];
+      const stack = [start.id], ids: number[] = [];
+      while (stack.length) { const id = stack.pop()!; if (visited.has(id)) continue; visited.add(id); ids.push(id); (adjacency.get(id) ?? []).forEach((next) => stack.push(next)); }
+      const members = ids.map((id) => atoms.find((atom) => atom.id === id)!).filter(Boolean);
+      const counts = members.reduce<Record<string, number>>((result, atom) => ({ ...result, [atom.element]: (result[atom.element] ?? 0) + 1 }), {});
+      const signature = Object.keys(counts).sort().map((symbol) => symbol + (counts[symbol] > 1 ? counts[symbol] : "")).join("");
+      const known = compoundNames[signature];
+      if (!known) return [];
+      return [{ ...known, x: members.reduce((sum, atom) => sum + atom.x, 0) / members.length, y: Math.max(...members.map((atom) => atom.y)) + 125 }];
+    });
+  }, [atoms, bonds]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -229,6 +261,7 @@ export default function Home() {
               })}
             </svg>
             {bonds.map((bond) => { const from=atoms.find((atom)=>atom.id===bond.from),to=atoms.find((atom)=>atom.id===bond.to); if(!from||!to)return null; const mx=pan.x+(from.x+to.x)*scale/2,my=pan.y+(from.y+to.y)*scale/2; return <button key={`target-${bond.id}`} className="bond-target" style={{transform:`translate(${mx-42}px,${my-30}px)`}} aria-label={`Inspect ${bond.type} bond`} onClick={(event)=>{event.stopPropagation();setSelectedBond(bond.id);setSelected([]);}}>{bond.type}</button>;})}
+            {namedCompounds.map((compound, index) => <div className="compound-label" key={`${compound.formula}-${index}`} style={{ transform: `translate(${pan.x + compound.x * scale}px, ${pan.y + compound.y * scale}px)` }}><b>{compound.formula}</b><span>{compound.name}</span></div>)}
             {atoms.map((atom) => {
               const item = elements[atom.element]; const isSelected = selected.includes(atom.id);
               const atomSize=200*scale;

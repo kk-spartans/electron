@@ -18,13 +18,15 @@ export default function AtomScene({
   charge = 0,
   sharedElectrons = 0,
   sharedFrom = [],
+  onElectronSelect,
 }: {
   symbol: string;
   atomicNumber: number;
   subshells: Subshell[];
   charge?: number;
   sharedElectrons?: number;
-  sharedFrom?: Array<{ color: string; label: string }>;
+  sharedFrom?: Array<{ color: string; label: string; subshell: string }>;
+  onElectronSelect?: (electron: { label: string; kind: "s" | "p" | "d" | "f"; shared: boolean; source?: string }) => void;
 }) {
   let removal = Math.max(0, charge);
   const adjusted = [...subshells].reverse().map((subshell) => {
@@ -64,7 +66,7 @@ export default function AtomScene({
           const x = (center + Math.cos(angle) * radius).toFixed(2);
           const y = (center + Math.sin(angle) * radius).toFixed(2);
           return (
-            <g key={`${electron.label}-${electronIndex}`} className={isShared ? "shared-origin" : undefined} transform={`translate(${x} ${y})`}>
+            <g key={`${electron.label}-${electronIndex}`} className={`diagram-electron${isShared ? " shared-origin" : ""}`} transform={`translate(${x} ${y})`} role={onElectronSelect ? "button" : undefined} tabIndex={onElectronSelect ? 0 : undefined} aria-label={`${electron.label} electron${isShared ? ", contributed to a bond" : ""}`} onClick={(event)=>{event.stopPropagation();onElectronSelect?.({label:electron.label,kind:electron.kind,shared:isShared});}} onKeyDown={(event)=>{if(event.key==="Enter"||event.key===" "){event.preventDefault();onElectronSelect?.({label:electron.label,kind:electron.kind,shared:isShared});}}}>
               {isShared && <circle r="7" className="shared-origin-ring" />}
               <circle r="4.6" className="electron-ring" />
               <circle r="3" fill={subshellColors[electron.kind]} />
@@ -77,7 +79,7 @@ export default function AtomScene({
           const radius = radii[shells - 1];
           const x = (center + Math.cos(angle) * radius).toFixed(2);
           const y = (center + Math.sin(angle) * radius).toFixed(2);
-          return <g key={`shared-from-${index}`} className="shared-received" transform={`translate(${x} ${y})`}>
+          return <g key={`shared-from-${index}`} className="diagram-electron shared-received" transform={`translate(${x} ${y})`} role={onElectronSelect ? "button" : undefined} tabIndex={onElectronSelect ? 0 : undefined} aria-label={`${source.subshell} electron shared from ${source.label}`} onClick={(event)=>{event.stopPropagation();onElectronSelect?.({label:source.subshell,kind:source.subshell.at(-1) as "s"|"p"|"d"|"f",shared:true,source:source.label});}} onKeyDown={(event)=>{if(event.key==="Enter"||event.key===" "){event.preventDefault();onElectronSelect?.({label:source.subshell,kind:source.subshell.at(-1) as "s"|"p"|"d"|"f",shared:true,source:source.label});}}}>
             <circle r="6.5" className="shared-received-ring" />
             <circle r="3" fill={source.color} />
             <title>{`Shared from ${source.label}`}</title>

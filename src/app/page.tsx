@@ -3,7 +3,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Atom,
-  HandGrabbing,
   MagnifyingGlass,
   Trash,
   X,
@@ -92,6 +91,7 @@ export default function Home() {
   const [scale, setScale] = useState(1);
   const [elementQuery, setElementQuery] = useState("");
   const [selectedBond, setSelectedBond] = useState<number | null>(null);
+  const [selectedElectron, setSelectedElectron] = useState<{ atomId: number; label: string; kind: "s"|"p"|"d"|"f"; shared: boolean; source?: string } | null>(null);
   const nextId = useRef(3);
   const canvasRef = useRef<HTMLElement>(null);
   const gesture = useRef<{ type: "pan" | "atom"; id?: number; sx: number; sy: number; ox: number; oy: number } | null>(null);
@@ -144,7 +144,8 @@ export default function Home() {
 
   function selectAtom(id: number) {
     setSelectedBond(null);
-    setSelected((current) => current[0] === id ? [] : [id]);
+    setSelectedElectron((current)=>current?.atomId===id?current:null);
+    setSelected([id]);
   }
 
   function stableBond(first: ElementKey, second: ElementKey): { type: BondType; order: 1 | 2 | 3 } | null {
@@ -157,7 +158,7 @@ export default function Home() {
     if (firstMetal !== secondMetal) return { type: "ionic", order: 1 };
     const pair = [first, second].sort().join("");
     if (pair === "NN") return { type: "covalent", order: 3 };
-    if (pair === "OO" || pair === "CO") return { type: "covalent", order: 2 };
+    if (pair === "OO" || pair === "CO" || pair === "OS") return { type: "covalent", order: 2 };
     return { type: "covalent", order: 1 };
   }
 
@@ -180,7 +181,7 @@ export default function Home() {
       const existingPartners = new Set(kept.flatMap((bond) => bond.from === id ? [bond.to] : bond.to === id ? [bond.from] : []));
       const proposed = nearby.filter(({atom}) => !existingPartners.has(atom.id)).map(({atom,distance}) => ({ atom, distance, inferred: stableBond(moved.element, atom.element) })).filter((item): item is {atom:AtomNode;distance:number;inferred:{type:BondType;order:1|2|3}} => Boolean(item.inferred)).sort((a,b)=>Number(a.atom.element===moved.element)-Number(b.atom.element===moved.element)||a.distance-b.distance);
       if (!proposed.length) return kept;
-      const capacity = (atom: AtomNode) => atom.element === "H" || ["F","Cl","Br","I"].includes(atom.element) ? 1 : atom.element === "O" ? 2 : atom.element === "N" ? 3 : atom.element === "C" ? 4 : 8;
+      const capacity = (atom: AtomNode) => atom.element === "H" || ["F","Cl","Br","I"].includes(atom.element) ? 1 : atom.element === "Be" ? 2 : atom.element === "B" || atom.element === "N" ? 3 : atom.element === "O" ? 2 : atom.element === "C" ? 4 : atom.element === "P" ? 5 : atom.element === "S" ? 6 : 8;
       const used = (atomId: number) => kept.filter((bond) => bond.from === atomId || bond.to === atomId).reduce((total,bond) => total+bond.order,0);
       let remaining=capacity(moved)-used(id);
       const accepted=proposed.filter(({atom,inferred})=>{if(inferred.order>remaining||used(atom.id)+inferred.order>capacity(atom))return false;remaining-=inferred.order;return true;});
@@ -226,16 +227,9 @@ export default function Home() {
 
   return (
     <main className="lab-shell">
-      <header className="lab-topbar">
-        <div className="lab-brand"><span><Atom weight="bold" /></span><b>Orbital</b><small>2D bond workspace</small></div>
-        <div className="subshell-key" aria-label="Subshell color key">
-          {(Object.keys(subshellColors) as Array<keyof typeof subshellColors>).map((kind) => <span key={kind}><i style={{ background: subshellColors[kind] }} />{kind} subshell</span>)}
-        </div>
-        <div className="canvas-hint"><HandGrabbing /> Drag empty space to pan</div>
-      </header>
-
       <div className="lab-layout">
         <aside className="element-tray">
+          <div className="product-mark"><span><Atom weight="bold" /></span><b>Electron</b></div>
           <div className="tray-heading"><b>Add atoms</b><small>Click or drag onto canvas</small></div>
           <label className="element-search"><MagnifyingGlass /><input value={elementQuery} onChange={(event) => setElementQuery(event.target.value)} placeholder="Search 118 elements" aria-label="Search elements" /></label>
           <div className="element-palette">
@@ -276,15 +270,16 @@ export default function Home() {
             {atoms.map((atom) => {
               const item = elements[atom.element]; const isSelected = selected.includes(atom.id);
               const sharedElectrons=bonds.filter((bond)=>bond.type==="covalent"&&(bond.from===atom.id||bond.to===atom.id)).reduce((total,bond)=>total+bond.order,0);
-              const sharedFrom=bonds.filter((bond)=>bond.type==="covalent"&&(bond.from===atom.id||bond.to===atom.id)).flatMap((bond)=>{const partner=atoms.find((item)=>item.id===(bond.from===atom.id?bond.to:bond.from));if(!partner)return[];const subshell=subshellsForElectronCount(elements[partner.element].z-partner.charge+partner.electronOffset).at(-1);return Array.from({length:bond.order},()=>({color:subshellColors[subshell?.kind??"s"],label:partner.element}));});
+              const sharedFrom=bonds.filter((bond)=>bond.type==="covalent"&&(bond.from===atom.id||bond.to===atom.id)).flatMap((bond)=>{const partner=atoms.find((item)=>item.id===(bond.from===atom.id?bond.to:bond.from));if(!partner)return[];const subshell=subshellsForElectronCount(elements[partner.element].z-partner.charge+partner.electronOffset).at(-1);return Array.from({length:bond.order},()=>({color:subshellColors[subshell?.kind??"s"],label:partner.element,subshell:subshell?.label??"unknown"}));});
               const atomSize=200*scale;
-              return <button className={`canvas-atom ${isSelected ? "selected" : ""}`} style={{ width:atomSize,height:atomSize,transform:`translate(${pan.x+atom.x*scale-atomSize/2}px, ${pan.y+atom.y*scale-atomSize/2}px)` }} key={atom.id}
-                onClick={(event) => { event.stopPropagation(); selectAtom(atom.id); }}
-                onPointerDown={(event) => { event.stopPropagation(); event.currentTarget.setPointerCapture(event.pointerId); gesture.current = { type: "atom", id: atom.id, sx: event.clientX, sy: event.clientY, ox: atom.x, oy: atom.y }; }}
+              return <div role="group" tabIndex={0} className={`canvas-atom ${isSelected ? "selected" : ""}`} style={{ width:atomSize,height:atomSize,transform:`translate(${pan.x+atom.x*scale-atomSize/2}px, ${pan.y+atom.y*scale-atomSize/2}px)` }} key={atom.id}
+                onClick={(event) => { event.stopPropagation(); if(!(event.target as Element).closest(".diagram-electron"))selectAtom(atom.id); }}
+                onKeyDown={(event)=>{if(event.key==="Enter"||event.key===" "){event.preventDefault();selectAtom(atom.id);}}}
+                onPointerDown={(event) => { event.stopPropagation(); if((event.target as Element).closest(".diagram-electron"))return; event.currentTarget.setPointerCapture(event.pointerId); gesture.current = { type: "atom", id: atom.id, sx: event.clientX, sy: event.clientY, ox: atom.x, oy: atom.y }; }}
                 onPointerMove={pointerMove} onPointerUp={() => { const movedId = gesture.current?.id; gesture.current = null; if (movedId) window.setTimeout(() => settleAtom(movedId), 0); }} aria-label={`${item.name} atom`}>
-                <AtomScene symbol={atom.element} atomicNumber={item.z} subshells={subshellsForElectronCount(item.z - atom.charge + atom.electronOffset)} sharedElectrons={sharedElectrons} sharedFrom={sharedFrom} />
+                <AtomScene symbol={atom.element} atomicNumber={item.z} subshells={subshellsForElectronCount(item.z - atom.charge + atom.electronOffset)} sharedElectrons={sharedElectrons} sharedFrom={sharedFrom} onElectronSelect={(electron)=>{setSelected([atom.id]);setSelectedBond(null);setSelectedElectron({atomId:atom.id,...electron});}} />
                 {atom.charge !== 0 && <span className={`atom-charge ${atom.charge > 0 ? "positive" : "negative"}`}>{atom.charge > 0 ? `+${atom.charge}` : atom.charge}</span>}
-              </button>;
+              </div>;
             })}
             {active && activeElement && <div className="canvas-atom-controls" style={{transform:`translate(${pan.x+active.x*scale-116}px,${pan.y+active.y*scale-100*scale-48}px)`}} onPointerDown={(event)=>event.stopPropagation()} onClick={(event)=>event.stopPropagation()}>
               <button aria-label="Remove electron" title={bondSummary.length?"Remove bonds before changing electrons":"Remove electron"} disabled={bondSummary.length>0||activeElement.z-active.charge+active.electronOffset<=0} onClick={()=>setAtoms((items)=>items.map((atom)=>atom.id===active.id?{...atom,electronOffset:Math.max(-(activeElement.z-active.charge),atom.electronOffset-1)}:atom))}>−</button>
@@ -299,7 +294,9 @@ export default function Home() {
         <aside className="atom-inspector">
           {activeBond ? <BondInspector bond={activeBond} atoms={atoms} onClose={() => setSelectedBond(null)} onRemove={() => { setBonds((items) => items.filter((item) => item.id !== activeBond.id)); setAtoms((items) => items.map((atom) => atom.id === activeBond.from || atom.id === activeBond.to ? {...atom,charge:0}:atom)); setSelectedBond(null); }} /> : active && activeElement ? <>
             <div className="inspector-title"><div><small>Selected atom</small><h1>{activeElement.name}</h1><code>{activeElement.config}</code></div><button aria-label="Deselect atom" onClick={() => setSelected([])}><X /></button></div>
+            {selectedElectron?.atomId===active.id&&<section className="selected-electron"><h2>Selected electron</h2><div><i style={{background:subshellColors[selectedElectron.kind]}}/><b>{selectedElectron.label}</b><span>{selectedElectron.kind} subshell</span></div><p>{selectedElectron.source?`Shared onto ${active.element} from ${selectedElectron.source}.`:selectedElectron.shared?"This valence electron is contributed to a covalent bond.":"This electron remains owned by the atom."}</p></section>}
             <section><h2>Occupied subshells by shell</h2><div className="shell-groups">{[...new Set(activeSubshells.map((subshell)=>subshell.shell))].map((shell)=>{const shellSubshells=activeSubshells.filter((subshell)=>subshell.shell===shell);const total=shellSubshells.reduce((sum,subshell)=>sum+subshell.count,0);const shared=shell===Math.max(...activeSubshells.map((subshell)=>subshell.shell))?bondSummary.filter((bond)=>bond.type==="covalent").reduce((sum,bond)=>sum+bond.order,0):0;return <div className="shell-group" key={shell}><div className="shell-total"><b>Shell {shell}</b><span>{total} owned electron{total===1?"":"s"}{shared>0&&<em> + {shared} shared</em>}</span></div><div className="subshell-list">{shellSubshells.map((subshell)=><div key={subshell.label}><i style={{background:subshellColors[subshell.kind]}}/><b>{subshell.label}</b><span>{subshell.count} electrons</span></div>)}</div></div>;})}</div></section>
+            <AtomLearning atom={active} atoms={atoms} bonds={bonds}/>
             <section><h2>Why it changes</h2><p>{activeElement.note}</p>{active.charge !== 0 && <p className="change-note">This atom is shown as {active.charge > 0 ? `a ${active.charge}+ cation after losing outer electrons` : `a ${Math.abs(active.charge)}− anion after gaining electrons`}.</p>}</section>
             <section><h2>Connected bonds</h2>{bondSummary.length ? <div className="bond-summary">{bondSummary.map((bond) => <div key={bond.id}><span><i className={bond.type} />{bond.type} bond</span><button aria-label={`Remove ${bond.type} bond`} onClick={() => { setBonds((items) => items.filter((item) => item.id !== bond.id)); setAtoms((items) => items.map((atom) => atom.id === bond.from || atom.id === bond.to ? { ...atom, charge: 0 } : atom)); }}><X /></button></div>)}</div> : <p>No bond. Move this atom close to a compatible atom.</p>}</section>
           </> : <div className="inspector-empty"><Atom /><b>Select an atom</b><span>Its configuration, subshells, charge, and bonds will appear here.</span></div>}
@@ -312,7 +309,51 @@ export default function Home() {
 function BondInspector({bond,atoms,onClose,onRemove}:{bond:BondEdge;atoms:AtomNode[];onClose:()=>void;onRemove:()=>void}) {
   const from=atoms.find((atom)=>atom.id===bond.from)!; const to=atoms.find((atom)=>atom.id===bond.to)!;
   const fromSubshell=subshellsForElectronCount(elements[from.element].z-from.charge+from.electronOffset).at(-1); const toSubshell=subshellsForElectronCount(elements[to.element].z-to.charge+to.electronOffset).at(-1);
+  const fromEn=pauling(from.element),toEn=pauling(to.element),difference=Math.abs(fromEn-toEn),moreNegative=fromEn>toEn?from:to;
   const metal = new Set(["Na","Fe","Li","K","Mg","Ca","Al"]);
   const donor=metal.has(from.element)?from:to; const receiver=donor===from?to:from;
-  return <div className="bond-inspector"><div className="inspector-title"><div><small>Selected bond</small><h1>{from.element} {bond.type === "ionic" ? "→" : "—"} {to.element}</h1><code>{bond.type} bond</code></div><button onClick={onClose}><X /></button></div><section><h2>Electron behavior</h2>{bond.type === "ionic" ? <p><b>{donor.element}</b> donates an outer electron to <b>{receiver.element}</b>. They become oppositely charged ions held by electrostatic attraction.</p> : bond.type === "covalent" ? <><p><b>{from.element}</b> contributes {bond.order} electron{bond.order>1?"s":""} and <b>{to.element}</b> contributes {bond.order}. Together they share <b>{bond.order*2} electrons</b> in {bond.order === 1 ? "one pair" : `${bond.order} pairs`}.</p><div className="bond-contributors"><span><i style={{background:subshellColors[fromSubshell?.kind??"s"]}} />{from.element}: {fromSubshell?.label}</span><span><i style={{background:subshellColors[toSubshell?.kind??"s"]}} />{to.element}: {toSubshell?.label}</span></div><small className="sharing-note">The matching ring on each atom marks the electron used here. Every single bond contains one two-electron pair.</small></> : <p>Valence electrons are delocalized across the metal atoms rather than belonging to one pair.</p>}</section><button className="remove-bond" onClick={onRemove}><Trash /> Remove bond</button></div>;
+  const polarity=bond.type==="ionic"?"ionic":difference<0.4?"mostly nonpolar":"polar covalent";
+  return <div className="bond-inspector"><div className="inspector-title"><div><small>Selected bond</small><h1>{from.element} {bond.type === "ionic" ? "→" : "—"} {to.element}</h1><code>{bond.type} bond</code></div><button onClick={onClose}><X /></button></div><section><h2>Electron behavior</h2>{bond.type === "ionic" ? <p><b>{donor.element}</b> donates an outer electron to <b>{receiver.element}</b>. They become oppositely charged ions held by electrostatic attraction.</p> : bond.type === "covalent" ? <><p><b>{from.element}</b> contributes {bond.order} electron{bond.order>1?"s":""} and <b>{to.element}</b> contributes {bond.order}. Together they share <b>{bond.order*2} electrons</b> in {bond.order === 1 ? "one pair" : `${bond.order} pairs`}.</p><div className="bond-contributors"><span><i style={{background:subshellColors[fromSubshell?.kind??"s"]}} />{from.element}: {fromSubshell?.label}</span><span><i style={{background:subshellColors[toSubshell?.kind??"s"]}} />{to.element}: {toSubshell?.label}</span></div><small className="sharing-note">The matching ring on each atom marks the electron used here. Every single bond contains one two-electron pair.</small></> : <p>Valence electrons are delocalized across the metal atoms rather than belonging to one pair.</p>}</section><section><h2>Bond polarity</h2><div className="polarity-scale"><span>{from.element}<small>{fromEn.toFixed(2)}</small></span><i style={{"--polarity":`${Math.min(100,difference/2*100)}%`} as React.CSSProperties}/><span>{to.element}<small>{toEn.toFixed(2)}</small></span></div><p>ΔEN = <b>{difference.toFixed(2)}</b>: this bond is {polarity}.{difference>=0.4&&bond.type==="covalent"&&<> Electron density is pulled toward <b>{moreNegative.element} δ−</b>; the other end is δ+.</>}</p></section><button className="remove-bond" onClick={onRemove}><Trash /> Remove bond</button></div>;
+}
+
+function pauling(symbol:string) {
+  return Number((periodicTable as unknown as Record<string,{pauling_negativity?:number|string}>)[symbol]?.pauling_negativity)||0;
+}
+
+function AtomLearning({atom,atoms,bonds}:{atom:AtomNode;atoms:AtomNode[];bonds:BondEdge[]}) {
+  const data=elements[atom.element];
+  const connected=bonds.filter((bond)=>bond.from===atom.id||bond.to===atom.id);
+  const covalent=connected.filter((bond)=>bond.type==="covalent");
+  const bondOrder=covalent.reduce((sum,bond)=>sum+bond.order,0);
+  const ownedValence=Math.max(0,data.valence-atom.charge);
+  const nonbonding=Math.max(0,ownedValence-bondOrder);
+  const lonePairs=Math.floor(nonbonding/2),unpaired=nonbonding%2;
+  const formalCharge=atom.charge||data.valence-nonbonding-bondOrder;
+  const neighborCount=new Set(covalent.map((bond)=>bond.from===atom.id?bond.to:bond.from)).size;
+  const domains=neighborCount+lonePairs;
+  let geometry="No molecular geometry",angle="—";
+  if(neighborCount===1){geometry="Linear around this bond";angle="180° axis";}
+  else if(domains===2){geometry="Linear";angle="180°";}
+  else if(domains===3){geometry=lonePairs?"Bent":"Trigonal planar";angle=lonePairs?"less than 120°":"120°";}
+  else if(domains===4){geometry=lonePairs===0?"Tetrahedral":lonePairs===1?"Trigonal pyramidal":"Bent";angle=lonePairs===0?"109.5°":lonePairs===1?"about 107°":"about 104.5°";}
+  else if(domains===5){geometry="Trigonal bipyramidal electron geometry";angle="90° and 120°";}
+  else if(domains>=6){geometry="Octahedral electron geometry";angle="90°";}
+  const shellTarget=atom.element==="H"||atom.element==="He"?2:8;
+  const shellCount=ownedValence+bondOrder;
+  const exception=atom.element==="H"||atom.element==="He"?"First-shell duet rule":atom.element==="Be"||atom.element==="B"?"Stable electron-deficient structures are possible":shellCount>8&&elements[atom.element].subshells.some((item)=>item.shell>=3)?"Expanded valence shell is possible for some period-3-and-beyond compounds":unpaired?"An unpaired electron makes this a radical-like arrangement":null;
+  const stable=connected.length===0?{tone:"neutral",title:"Unbonded",text:"Move the atom near compatible partners to test a structure."}:shellCount===shellTarget||Boolean(exception)?{tone:"good",title:"Locally satisfied",text:`The displayed valence shell has ${shellCount} electrons when shared electrons are counted.`}:shellCount<shellTarget?{tone:"warn",title:"Incomplete valence shell",text:`This arrangement shows ${shellCount} of the usual ${shellTarget} valence-shell electrons.`}:{tone:"warn",title:"Check this structure",text:`The displayed shell has ${shellCount} electrons, above the usual ${shellTarget}.`};
+  const componentIds=new Set<number>(),stack=[atom.id];
+  while(stack.length){const id=stack.pop()!;if(componentIds.has(id))continue;componentIds.add(id);bonds.filter((bond)=>bond.from===id||bond.to===id).forEach((bond)=>stack.push(bond.from===id?bond.to:bond.from));}
+  const counts=[...componentIds].map((id)=>atoms.find((item)=>item.id===id)!).reduce<Record<string,number>>((result,item)=>({...result,[item.element]:(result[item.element]??0)+1}),{});
+  const signature=Object.keys(counts).sort().map((symbol)=>symbol+(counts[symbol]>1?counts[symbol]:"")).join("");
+  const resonance:Record<string,string>={O3:"Ozone is a resonance hybrid: the π bonding is delocalized, so its two O–O bonds are equivalent overall.",O2S:"Sulfur dioxide is described by resonance contributors; electron density is delocalized across both S–O bonds.",O3S:"Sulfur trioxide has three equivalent S–O bonds in its resonance description.",C6H6:"Benzene’s six π electrons are delocalized around the ring; alternating drawings are resonance contributors."};
+  const molecularDipoles:Record<string,string>={CO2:"The two equal C=O bond dipoles point in opposite directions and cancel, so CO₂ is nonpolar overall.",H2O:"The bent shape prevents the O–H bond dipoles from cancelling, so water has a net dipole.",CH4:"The tetrahedral C–H bond dipoles cancel by symmetry, so methane is nonpolar overall.",H3N:"The trigonal-pyramidal shape leaves ammonia with a net dipole toward nitrogen.",O2S:"The bent shape leaves sulfur dioxide with a net molecular dipole.",O3S:"The three S–O bond dipoles cancel in trigonal-planar SO₃."};
+  const polarBonds=covalent.map((bond)=>{const partner=atoms.find((item)=>item.id===(bond.from===atom.id?bond.to:bond.from))!;const difference=Math.abs(pauling(atom.element)-pauling(partner.element));return {partner,difference,toward:pauling(atom.element)>pauling(partner.element)?atom.element:partner.element};}).filter((item)=>item.difference>=0.4);
+  return <>
+    <section><h2>Lewis accounting</h2><div className="learning-metrics"><div><b>{lonePairs}</b><span>lone pair{lonePairs===1?"":"s"}</span></div><div><b>{unpaired}</b><span>unpaired</span></div><div><b>{formalCharge>0?`+${formalCharge}`:formalCharge}</b><span>formal charge</span></div></div><p>Bonding uses {bondOrder} electron{bondOrder===1?"":"s"} contributed by this atom; {nonbonding} valence electron{nonbonding===1?" remains":"s remain"} nonbonding.</p></section>
+    <section><h2>Molecular geometry</h2><div className="geometry-readout"><b>{geometry}</b><span>{angle}</span></div><p>VSEPR estimate from {neighborCount} bonded region{neighborCount===1?"":"s"} and {lonePairs} lone pair{lonePairs===1?"":"s"}. Multiple bonds count as one electron region.</p></section>
+    <section><h2>Polarity around this atom</h2>{polarBonds.length?<div className="polarity-list">{polarBonds.map(({partner,difference,toward},index)=><div key={`${partner.id}-${index}`}><b>{atom.element}—{partner.element}</b><span>ΔEN {difference.toFixed(2)} · toward {toward} δ−</span></div>)}</div>:<p>{covalent.length?"No strongly polar covalent bond is shown around this atom.":"Create a covalent bond to compare electronegativity."}</p>}{molecularDipoles[signature]&&<p className="dipole-note">{molecularDipoles[signature]}</p>}</section>
+    <section><h2>Stability check</h2><div className={`stability ${stable.tone}`}><b>{stable.title}</b><span>{stable.text}</span></div></section>
+    <section><h2>Resonance & octet exceptions</h2>{resonance[signature]?<p className="resonance-note">{resonance[signature]}</p>:exception?<p className="resonance-note">{exception}. The octet rule is a useful pattern, not a universal law.</p>:<p>No common resonance or octet exception is detected for this local structure.</p>}</section>
+  </>;
 }

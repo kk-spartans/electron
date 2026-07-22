@@ -9,9 +9,10 @@ import {
   X,
 } from "@phosphor-icons/react";
 import AtomScene, { Subshell, subshellColors } from "@/components/AtomScene";
+import periodicTable from "@exabyte-io/periodic-table.js/periodic-table.json";
 
 type ElementKey = string;
-type AtomNode = { id: number; element: ElementKey; x: number; y: number; charge: number };
+type AtomNode = { id: number; element: ElementKey; x: number; y: number; charge: number; electronOffset: number };
 type BondType = "covalent" | "ionic" | "metallic";
 type BondEdge = { id: number; from: number; to: number; type: BondType; order: 1 | 2 | 3 };
 
@@ -46,13 +47,26 @@ function generatedElement(symbol: string, z: number): ElementData {
   const highest = Math.max(...subshells.map((item) => item.shell));
   const shells = Array.from({ length: highest }, (_, index) => subshells.filter((item) => item.shell === index + 1).reduce((sum, item) => sum + item.count, 0));
   const valence = shells.at(-1) ?? 0;
-  return { name: "Element " + symbol, z, shells, valence, subshells, config: subshells.map((item) => item.label + item.count).join(" "), note: symbol + " is shown using its ground-state Aufbau filling order. Bonding behavior depends on its outer electrons." };
+  const reference = (periodicTable as Record<string, { name: string; electronic_configuration: string }>)[symbol];
+  return { name: reference.name, z, shells, valence, subshells, config: reference.electronic_configuration, note: reference.name + " is shown using its ground-state filling order. Bonding behavior depends on its outer electrons." };
 }
 const elements: Record<string, ElementData> = Object.fromEntries(allSymbols.map((symbol, index) => [symbol, coreElements[symbol] ?? generatedElement(symbol, index + 1)]));
 
+function subshellsForElectronCount(count: number) {
+  let remaining = Math.max(0, count);
+  const result: Subshell[] = [];
+  for (const [label, shell, capacity, kind] of filling) {
+    if (!remaining) break;
+    const occupied = Math.min(capacity, remaining);
+    result.push({ label, shell, count: occupied, kind });
+    remaining -= occupied;
+  }
+  return result;
+}
+
 const initialAtoms: AtomNode[] = [
-  { id: 1, element: "Na", x: 220, y: 310, charge: 1 },
-  { id: 2, element: "Cl", x: 490, y: 310, charge: -1 },
+  { id: 1, element: "Na", x: 220, y: 310, charge: 1, electronOffset: 0 },
+  { id: 2, element: "Cl", x: 490, y: 310, charge: -1, electronOffset: 0 },
 ];
 
 export default function Home() {
@@ -68,6 +82,7 @@ export default function Home() {
   const gesture = useRef<{ type: "pan" | "atom"; id?: number; sx: number; sy: number; ox: number; oy: number } | null>(null);
   const active = atoms.find((atom) => atom.id === selected[selected.length - 1]);
   const activeElement = active ? elements[active.element] : null;
+  const activeSubshells = active && activeElement ? subshellsForElectronCount(activeElement.z - active.charge + active.electronOffset) : [];
   const activeBond = bonds.find((bond) => bond.id === selectedBond);
   const visibleElements = allSymbols.filter((symbol) => symbol.toLowerCase().includes(elementQuery.toLowerCase()) || elements[symbol].name.toLowerCase().includes(elementQuery.toLowerCase()));
 
@@ -88,7 +103,7 @@ export default function Home() {
     const id = nextId.current++;
     const centerX = ((canvasRef.current?.clientWidth ?? 960) / 2 - pan.x) / scale;
     const centerY = ((canvasRef.current?.clientHeight ?? 620) / 2 - pan.y) / scale;
-    setAtoms((items) => [...items, { id, element, x: x ?? centerX, y: y ?? centerY, charge: 0 }]);
+    setAtoms((items) => [...items, { id, element, x: x ?? centerX, y: y ?? centerY, charge: 0, electronOffset: 0 }]);
     setSelected([id]);
   }
 
@@ -195,7 +210,7 @@ export default function Home() {
           onDrop={(event) => { const symbol = event.dataTransfer.getData("element") as ElementKey; const box = event.currentTarget.getBoundingClientRect(); if (symbol in elements) addAtom(symbol, (event.clientX - box.left - pan.x) / scale, (event.clientY - box.top - pan.y) / scale); }}
           onPointerDown={(event) => {
             const target = event.target as Element;
-            if (!target.closest(".canvas-atom, .bond-toolbar")) {
+            if (!target.closest(".canvas-atom, .bond-toolbar, .bond-target")) {
               event.currentTarget.setPointerCapture(event.pointerId);
               gesture.current = { type: "pan", sx: event.clientX, sy: event.clientY, ox: pan.x, oy: pan.y };
             }
@@ -205,21 +220,23 @@ export default function Home() {
             <span><Atom /> Bonds form automatically at stable distance</span>
             <output className="zoom-level" aria-label="Canvas zoom">{Math.round(scale * 100)}%</output>
           </div>
-          <div className="canvas-world" style={{ transform: `translate(${pan.x}px, ${pan.y}px) scale(${scale})` }}>
+          <div className="canvas-world">
             <svg className="bond-layer" width="1600" height="1000">
               {bonds.map((bond) => {
                 const from = atoms.find((atom) => atom.id === bond.from); const to = atoms.find((atom) => atom.id === bond.to); if (!from || !to) return null;
-                const mx=(from.x+to.x)/2, my=(from.y+to.y)/2;
-                return <g key={bond.id} className={`bond-line ${bond.type} ${selectedBond === bond.id ? "selected" : ""}`} onClick={(event) => { event.stopPropagation(); setSelectedBond(bond.id); setSelected([]); }}><line className="bond-hit" x1={from.x} y1={from.y} x2={to.x} y2={to.y} /><line x1={from.x} y1={from.y} x2={to.x} y2={to.y} /><text x={mx} y={my-12}>{bond.type}</text>{bond.order > 1 && <line x1={from.x} y1={from.y+8} x2={to.x} y2={to.y+8} />}{bond.type === "covalent" && Array.from({length:bond.order*2},(_,i)=><circle className="shared-electron" key={i} cx={mx+(i%2?5:-5)} cy={my+(Math.floor(i/2)-(bond.order-1)/2)*10} r="3" />)}</g>;
+                const x1=pan.x+from.x*scale,y1=pan.y+from.y*scale,x2=pan.x+to.x*scale,y2=pan.y+to.y*scale,mx=(x1+x2)/2,my=(y1+y2)/2;
+                return <g key={bond.id} className={`bond-line ${bond.type} ${selectedBond === bond.id ? "selected" : ""}`}><line x1={x1} y1={y1} x2={x2} y2={y2} />{bond.order > 1 && <line x1={x1} y1={y1+8*scale} x2={x2} y2={y2+8*scale} />}{bond.type === "covalent" && Array.from({length:bond.order*2},(_,i)=><circle className="shared-electron" key={i} cx={mx+(i%2?5:-5)*scale} cy={my+(Math.floor(i/2)-(bond.order-1)/2)*10*scale} r={3*scale} />)}</g>;
               })}
             </svg>
+            {bonds.map((bond) => { const from=atoms.find((atom)=>atom.id===bond.from),to=atoms.find((atom)=>atom.id===bond.to); if(!from||!to)return null; const mx=pan.x+(from.x+to.x)*scale/2,my=pan.y+(from.y+to.y)*scale/2; return <button key={`target-${bond.id}`} className="bond-target" style={{transform:`translate(${mx-42}px,${my-30}px)`}} aria-label={`Inspect ${bond.type} bond`} onClick={(event)=>{event.stopPropagation();setSelectedBond(bond.id);setSelected([]);}}>{bond.type}</button>;})}
             {atoms.map((atom) => {
               const item = elements[atom.element]; const isSelected = selected.includes(atom.id);
-              return <button className={`canvas-atom ${isSelected ? "selected" : ""}`} style={{ transform: `translate(${atom.x - 100}px, ${atom.y - 100}px)` }} key={atom.id}
+              const atomSize=200*scale;
+              return <button className={`canvas-atom ${isSelected ? "selected" : ""}`} style={{ width:atomSize,height:atomSize,transform:`translate(${pan.x+atom.x*scale-atomSize/2}px, ${pan.y+atom.y*scale-atomSize/2}px)` }} key={atom.id}
                 onClick={(event) => { event.stopPropagation(); selectAtom(atom.id); }}
                 onPointerDown={(event) => { event.stopPropagation(); event.currentTarget.setPointerCapture(event.pointerId); gesture.current = { type: "atom", id: atom.id, sx: event.clientX, sy: event.clientY, ox: atom.x, oy: atom.y }; }}
                 onPointerMove={pointerMove} onPointerUp={() => { const movedId = gesture.current?.id; gesture.current = null; if (movedId) window.setTimeout(() => settleAtom(movedId), 0); }} aria-label={`${item.name} atom`}>
-                <AtomScene symbol={atom.element} atomicNumber={item.z} subshells={item.subshells} charge={Math.max(0, atom.charge)} />
+                <AtomScene symbol={atom.element} atomicNumber={item.z} subshells={subshellsForElectronCount(item.z - atom.charge + atom.electronOffset)} />
                 {atom.charge !== 0 && <span className={`atom-charge ${atom.charge > 0 ? "positive" : "negative"}`}>{atom.charge > 0 ? `+${atom.charge}` : atom.charge}</span>}
               </button>;
             })}
@@ -230,10 +247,11 @@ export default function Home() {
         <aside className="atom-inspector">
           {activeBond ? <BondInspector bond={activeBond} atoms={atoms} onClose={() => setSelectedBond(null)} onRemove={() => { setBonds((items) => items.filter((item) => item.id !== activeBond.id)); setAtoms((items) => items.map((atom) => atom.id === activeBond.from || atom.id === activeBond.to ? {...atom,charge:0}:atom)); setSelectedBond(null); }} /> : active && activeElement ? <>
             <div className="inspector-title"><div><small>Selected atom</small><h1>{activeElement.name}</h1><code>{activeElement.config}</code></div><button aria-label="Deselect atom" onClick={() => setSelected([])}><X /></button></div>
-            <div className="atom-preview"><AtomScene symbol={active.element} atomicNumber={activeElement.z} subshells={activeElement.subshells} charge={Math.max(0, active.charge)} /></div>
-            <section><h2>Occupied subshells</h2><div className="subshell-list">{activeElement.subshells.map((subshell) => <div key={subshell.label}><i style={{ background: subshellColors[subshell.kind] }} /><b>{subshell.label}</b><span>{Math.max(0, subshell.count + (subshell === activeElement.subshells.at(-1) ? -active.charge : 0))} electrons</span></div>)}</div></section>
+            <div className="atom-preview"><AtomScene symbol={active.element} atomicNumber={activeElement.z} subshells={activeSubshells} /></div>
+            <section><h2>Occupied subshells</h2><div className="subshell-list">{activeSubshells.map((subshell) => <div key={subshell.label}><i style={{ background: subshellColors[subshell.kind] }} /><b>{subshell.label}</b><span>{subshell.count} electrons</span></div>)}</div></section>
             <section><h2>Why it changes</h2><p>{activeElement.note}</p>{active.charge !== 0 && <p className="change-note">This atom is shown as {active.charge > 0 ? `a ${active.charge}+ cation after losing outer electrons` : `a ${Math.abs(active.charge)}− anion after gaining electrons`}.</p>}</section>
             <section><h2>Connected bonds</h2>{bondSummary.length ? <div className="bond-summary">{bondSummary.map((bond) => <div key={bond.id}><span><i className={bond.type} />{bond.type} bond</span><button aria-label={`Remove ${bond.type} bond`} onClick={() => { setBonds((items) => items.filter((item) => item.id !== bond.id)); setAtoms((items) => items.map((atom) => atom.id === bond.from || atom.id === bond.to ? { ...atom, charge: 0 } : atom)); }}><X /></button></div>)}</div> : <p>No bond. Move this atom close to a compatible atom.</p>}</section>
+            <section className="electron-demo"><h2>Electron filling demonstration</h2><p>{bondSummary.length ? "Remove the bond before changing this atom’s electron count." : "Step through Aufbau filling and outer-electron removal."}</p><div><button disabled={bondSummary.length>0} onClick={() => setAtoms((items) => items.map((atom) => atom.id === active.id ? {...atom,electronOffset:atom.electronOffset-1}:atom))}>Remove electron</button><b>{activeElement.z-active.charge+active.electronOffset} e⁻</b><button disabled={bondSummary.length>0} onClick={() => setAtoms((items) => items.map((atom) => atom.id === active.id ? {...atom,electronOffset:atom.electronOffset+1}:atom))}>Add electron</button></div><small>{activeSubshells.at(-1)?.label} is the active subshell</small></section>
             <div className="inspector-actions"><button className="danger" onClick={() => { setAtoms((items) => items.filter((atom) => atom.id !== active.id)); setBonds((items) => items.filter((bond) => bond.from !== active.id && bond.to !== active.id)); setSelected([]); }}><Trash /> Remove atom</button></div>
           </> : <div className="inspector-empty"><Atom /><b>Select an atom</b><span>Its configuration, subshells, charge, and bonds will appear here.</span></div>}
         </aside>

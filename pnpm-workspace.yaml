@@ -1,4 +1,5 @@
 allowBuilds:
+  '@exabyte-io/periodic-table.js': true
   sharp: true
 ignoredBuiltDependencies:
   - sharp

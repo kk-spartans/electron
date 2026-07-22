@@ -45,8 +45,8 @@ button { color:inherit; font:inherit; }
 .bond-toolbar button:disabled { color:#59635b; cursor:not-allowed; }
 .zoom-level { min-width:42px; padding:0 7px; border-left:1px solid var(--line); color:#b8c2ba; font:9px var(--font-geist-mono); text-align:center; }
 .bond-layer { position:absolute; inset:0; overflow:visible; pointer-events:none; }
-.bond-line { pointer-events:stroke; cursor:pointer; }
-.bond-line .bond-hit { stroke:transparent; stroke-width:22; }
+.bond-line { pointer-events:none; cursor:pointer; outline:none; }
+.bond-line .bond-hit { stroke:transparent; stroke-width:22; pointer-events:stroke; cursor:pointer; }
 .bond-line.selected line:not(.bond-hit) { filter:drop-shadow(0 0 5px var(--accent)); }
 .bond-line line { stroke-width:3; stroke:#d8e0da; }
 .bond-line.covalent line { stroke:var(--cyan); }
@@ -54,6 +54,7 @@ button { color:inherit; font:inherit; }
 .bond-line.metallic line { stroke:var(--violet); stroke-dasharray:2 5; }
 .bond-line text { fill:#c7d0c9; paint-order:stroke; stroke:#0d110e; stroke-width:5px; font:9px var(--font-geist-mono); text-anchor:middle; }
 .shared-electron { fill:var(--cyan); stroke:#0d110e; stroke-width:1.5; pointer-events:none; }
+.bond-target { position:absolute; left:0; top:0; width:84px; height:28px; z-index:3; border:0; background:transparent; color:#c7d0c9; font:9px var(--font-geist-mono); cursor:pointer; text-shadow:0 1px 3px #000; }.bond-target:hover,.bond-target:focus-visible { color:var(--accent); outline:1px solid var(--line); border-radius:6px; background:#111611cc; }
 .canvas-atom { position:absolute; left:0; top:0; width:200px; height:200px; padding:0; border:0; background:transparent; cursor:move; border-radius:50%; transition:filter .18s ease; }
 .canvas-atom:hover { filter:brightness(1.15); }
 .canvas-atom.selected { outline:1px solid var(--accent); outline-offset:4px; }
@@ -82,6 +83,7 @@ button { color:inherit; font:inherit; }
 .subshell-list div { display:grid; grid-template-columns:8px 25px auto; align-items:center; gap:6px; border:1px solid var(--line); padding:6px 7px; border-radius:7px; background:var(--surface); }
 .subshell-list i { width:7px; height:7px; border-radius:50%; }.subshell-list b { font:10px var(--font-geist-mono); }.subshell-list span { color:var(--muted); font:8px var(--font-geist-mono); }
 .change-note { color:#cbd4cd!important; background:#182019; padding:9px; border-radius:7px; }
+.electron-demo > div { display:grid; grid-template-columns:1fr auto 1fr; align-items:center; gap:6px; }.electron-demo button { min-height:32px; border:1px solid #57634f; background:#232b20; color:var(--text); border-radius:7px; padding:7px 6px; font-size:9px; font-weight:600; cursor:pointer; box-shadow:inset 0 1px 0 #ffffff0d; }.electron-demo button:hover:not(:disabled) { border-color:var(--accent); background:#2b3526; }.electron-demo button:disabled { border-color:#303630; background:#151915; color:#657067; cursor:not-allowed; }.electron-demo b { font:10px var(--font-geist-mono); }.electron-demo small { display:block; margin-top:8px; color:var(--accent); font:9px var(--font-geist-mono); }
 .bond-summary { display:grid; gap:6px; }.bond-summary > div { display:flex; align-items:center; justify-content:space-between; gap:6px; padding:4px 4px 4px 8px; background:var(--surface-2); border-radius:7px; }.bond-summary span { display:flex; align-items:center; gap:6px; font-size:9px; }.bond-summary i { width:14px; height:2px; background:var(--cyan); }.bond-summary i.ionic { background:var(--coral); }.bond-summary i.metallic { background:var(--violet); }.bond-summary button { width:24px; height:24px; display:grid; place-items:center; border:0; border-radius:5px; background:transparent; color:var(--muted); cursor:pointer; }.bond-summary button:hover { background:#29312a; color:var(--text); }
 .inspector-actions { display:grid; grid-template-columns:1fr 1fr; gap:6px; padding-top:4px; }.inspector-actions button { display:flex; justify-content:center; align-items:center; gap:5px; border:1px solid var(--line); background:var(--surface-2); border-radius:7px; padding:8px; font-size:9px; cursor:pointer; }.inspector-actions .danger { grid-column:1/-1; color:#ff9d8e; }
 .inspector-empty { height:100%; display:grid; place-content:center; justify-items:center; text-align:center; gap:8px; color:var(--muted); }.inspector-empty svg { color:var(--accent); font-size:30px; }.inspector-empty b { color:var(--text); font-size:13px; }.inspector-empty span { max-width:180px; font-size:10px; line-height:1.5; }

@@ -109,6 +109,7 @@ export default function Home() {
   const [formulaOpen,setFormulaOpen]=useState(false);
   const [formulaInput,setFormulaInput]=useState("");
   const [formulaError,setFormulaError]=useState("");
+  const [formulaLoading,setFormulaLoading]=useState(false);
   const [sidebarWidths,setSidebarWidths]=useState({left:196,right:292});
   const [periodicOpen,setPeriodicOpen]=useState(false);
   const [valenceFilter,setValenceFilter]=useState("all");
@@ -253,16 +254,19 @@ export default function Home() {
   }
 
   async function spawnFormula(formula:string){
-    const normalized=formula.normalize("NFKC").replace(/\s+/g,"");
-    const matches=[...normalized.matchAll(/([A-Z][a-z]?)(\d*)/g)];
-    if(!normalized||matches.map((match)=>match[0]).join("")!==normalized){setFormulaError("Use valid, case-sensitive element symbols and whole-number subscripts.");return;}
-    const symbols=matches.flatMap((match)=>{const symbol=match[1];const count=match[2]?Number(match[2]):1;if(!(symbol in elements)||!Number.isInteger(count)||count<1||count>120)return[];return Array.from({length:count},()=>symbol);});
-    const expected=matches.reduce((sum,match)=>sum+(match[2]?Number(match[2]):1),0);
-    if(symbols.length!==expected){setFormulaError("One of those element symbols or subscripts is not supported.");return;}
-    if(symbols.length>120){setFormulaError(`This formula contains ${symbols.length} atoms; the canvas limit is 120.`);return;}
+    const query=formula.normalize("NFKC").trim(),compact=query.replace(/\s+/g,""),queryTokens=[...compact.matchAll(/([A-Z][a-z]?)(\d*)/g)],isFormula=queryTokens.map((match)=>match[0]).join("")===compact&&queryTokens.every((match)=>match[1] in elements);
+    if(!query){setFormulaError("Enter a formula, compound name, PubChem CID, or prefixed SMILES.");return;}
+    if(isFormula){
+      const matches=queryTokens;
+      const symbols=matches.flatMap((match)=>{const symbol=match[1];const count=match[2]?Number(match[2]):1;if(!(symbol in elements)||!Number.isInteger(count)||count<1||count>120)return[];return Array.from({length:count},()=>symbol);});
+      const expected=matches.reduce((sum,match)=>sum+(match[2]?Number(match[2]):1),0);
+      if(symbols.length!==expected){setFormulaError("One of those element symbols or subscripts is not supported.");return;}
+      if(symbols.length>120){setFormulaError(`This formula contains ${symbols.length} atoms; the canvas limit is 120.`);return;}
+    }
     setFormulaError("");
+    setFormulaLoading(true);
     try{
-      const response=await fetch(`/api/structure?formula=${encodeURIComponent(normalized)}`);
+      const response=await fetch(`/api/structure?query=${encodeURIComponent(query)}`);
       if(!response.ok){const failure=await response.json() as {error?:string};setFormulaError(failure.error??"The structure could not be loaded.");return;}
       const payload=await response.json() as StructureRecord&{error?:string};
       if(payload.error){setFormulaError(payload.error);return;}
@@ -279,8 +283,9 @@ export default function Home() {
         const first=atomById.get(from)!,second=atomById.get(to)!,inferred=stableBond(first.element,second.element);
         return[{id:Date.now()+index,from,to,type:inferred?.type??"covalent",order:Math.max(1,Math.min(3,bond.order)) as 1|2|3}];
       });
+      const resolvedFormula=payload.formula.normalize("NFKC").replace(/\s+/g,"");
       const constrainedAngles:Record<string,number>={H2O:104.5,CO2:180,O3:116.8,O2S:119,SO2:119};
-      const constrainedAngle=constrainedAngles[normalized];
+      const constrainedAngle=constrainedAngles[resolvedFormula];
       if(constrainedAngle){
         const center=created.map((atom)=>({atom,bonds:createdBonds.filter((bond)=>bond.from===atom.id||bond.to===atom.id)})).sort((a,b)=>b.bonds.length-a.bonds.length)[0];
         if(center?.bonds.length===2){
@@ -290,7 +295,7 @@ export default function Home() {
           neighbors[1].y=center.atom.y+Math.sin(reference+constrainedAngle*Math.PI/180)*distance;
         }
       }
-      const displayFormula=normalized.replace(/\d/g,(digit)=>"₀₁₂₃₄₅₆₇₈₉"[Number(digit)]);
+      const displayFormula=resolvedFormula.replace(/\d/g,(digit)=>"₀₁₂₃₄₅₆₇₈₉"[Number(digit)]);
       const groupId=Date.now()+1000;
       if(canvasRef.current){
         const minX=Math.min(...created.map((atom)=>atom.x))-125,maxX=Math.max(...created.map((atom)=>atom.x))+125,minY=Math.min(...created.map((atom)=>atom.y))-125,maxY=Math.max(...created.map((atom)=>atom.y))+125;
@@ -300,6 +305,7 @@ export default function Home() {
       }
       setAtoms((items)=>[...items,...created]);setBonds((items)=>[...items,...createdBonds]);setFormulaGroups((groups)=>[...groups,{id:groupId,atomIds:ids,formula:displayFormula,name:payload.name,source:payload.source,cid:payload.cid}]);setSelected([]);setSelectedMolecule(groupId);setSelectedBond(null);setFormulaOpen(false);setFormulaInput("");setFormulaError("");
     }catch{setFormulaError("The structure database is unavailable. No structure was guessed.");}
+    finally{setFormulaLoading(false);}
   }
 
   function periodicMatch(symbol:string){
@@ -429,6 +435,7 @@ export default function Home() {
         <aside className="element-tray">
           <div className="product-mark"><span><Atom weight="bold" /></span><b>Electron</b></div>
           <button type="button" className="open-periodic" onClick={()=>setPeriodicOpen(true)}><Atom/> Periodic table</button>
+          <button type="button" className="open-periodic structure-lookup" onClick={()=>{setFormulaOpen(true);setFormulaError("");}}><MagnifyingGlass/> Add molecule</button>
           <div className="tray-heading"><b>Add atoms</b><small>Click or drag onto canvas</small></div>
           <label className="element-search"><MagnifyingGlass /><input value={elementQuery} onChange={(event) => setElementQuery(event.target.value)} placeholder="Search 118 elements" aria-label="Search elements" /></label>
           <div className="element-palette">
@@ -519,7 +526,7 @@ export default function Home() {
         <div className="sidebar-resizer right" role="separator" aria-label="Resize information sidebar" aria-orientation="vertical" aria-valuenow={sidebarWidths.right} onPointerDown={(event)=>{event.currentTarget.setPointerCapture(event.pointerId);resizing.current={side:"right",startX:event.clientX,startWidth:sidebarWidths.right};}} onPointerMove={(event)=>{const current=resizing.current;if(!current||current.side!=="right")return;setSidebarWidths((widths)=>({...widths,right:Math.max(220,Math.min(460,current.startWidth-event.clientX+current.startX))}));}} onPointerUp={()=>{resizing.current=null;}} onPointerCancel={()=>{resizing.current=null;}} onLostPointerCapture={()=>{resizing.current=null;}}/>
       </div>
       {periodicOpen&&<div className="periodic-backdrop" onPointerDown={()=>setPeriodicOpen(false)}><section className="periodic-panel" role="dialog" aria-modal="true" aria-label="Periodic table" onPointerDown={(event)=>event.stopPropagation()}><header><div><small>Element library</small><h1>Periodic table</h1></div><div className="periodic-filters"><label>Valence<select value={valenceFilter} onChange={(event)=>setValenceFilter(event.target.value)}><option value="all">All</option>{Array.from({length:8},(_,index)=><option key={index+1} value={index+1}>{index+1} electron{index===0?"":"s"}</option>)}</select></label><label>Character<select value={characterFilter} onChange={(event)=>setCharacterFilter(event.target.value)}><option value="all">All</option><option value="electronegative">Electronegative</option><option value="intermediate">Intermediate</option><option value="electropositive">Electropositive</option></select></label></div><button type="button" aria-label="Close periodic table" onClick={()=>setPeriodicOpen(false)}><X/></button></header><div className="periodic-grid">{periodicMain.flatMap((row,rowIndex)=>row.map(([symbol,column])=>{const item=elements[symbol],matches=periodicMatch(symbol);return <button type="button" key={symbol} className={matches?"":"filtered"} disabled={!matches} draggable={matches} style={{gridColumn:column,gridRow:rowIndex+1}} onDragStart={(event)=>{event.dataTransfer.setData("element",symbol);event.dataTransfer.effectAllowed="copy";}} onDragEnd={(event)=>dropPeriodicAtom(event,symbol)} onClick={()=>{addAtom(symbol);setPeriodicOpen(false);}}><small>{item.z}</small><b>{symbol}</b><span>{item.name}</span><i>{item.valence}v · {pauling(symbol)||"—"} EN</i></button>}))}{periodicFBlock.flatMap((row,rowIndex)=>row.map((symbol,index)=>{const item=elements[symbol],matches=periodicMatch(symbol);return <button type="button" key={symbol} className={matches?"f-block":"f-block filtered"} disabled={!matches} draggable={matches} style={{gridColumn:index+4,gridRow:rowIndex+8}} onDragStart={(event)=>event.dataTransfer.setData("element",symbol)} onDragEnd={(event)=>dropPeriodicAtom(event,symbol)} onClick={()=>{addAtom(symbol);setPeriodicOpen(false);}}><small>{item.z}</small><b>{symbol}</b><span>{item.name}</span><i>{item.valence}v · {pauling(symbol)||"—"} EN</i></button>}))}</div></section></div>}
-      {formulaOpen&&<div className="formula-command-backdrop" onPointerDown={()=>setFormulaOpen(false)}><form className="formula-command" role="dialog" aria-modal="true" aria-label="Create molecule from formula" onPointerDown={(event)=>event.stopPropagation()} onSubmit={(event)=>{event.preventDefault();spawnFormula(formulaInput);}}><label><span>Chemical formula</span><input autoFocus value={formulaInput} onChange={(event)=>{setFormulaInput(event.target.value);setFormulaError("");}} spellCheck={false} autoComplete="off" placeholder="H2O"/></label>{formulaError&&<p role="alert">{formulaError}</p>}<button type="submit">Create molecule</button></form></div>}
+      {formulaOpen&&<div className="formula-command-backdrop" onPointerDown={()=>{if(!formulaLoading)setFormulaOpen(false);}}><form className="formula-command" role="dialog" aria-modal="true" aria-label="Add a PubChem structure" onPointerDown={(event)=>event.stopPropagation()} onSubmit={(event)=>{event.preventDefault();spawnFormula(formulaInput);}}><label><span>Structure lookup</span><input autoFocus value={formulaInput} onChange={(event)=>{setFormulaInput(event.target.value);setFormulaError("");}} spellCheck={false} autoComplete="off" placeholder="Formula, name, CID, or smiles:…"/></label><small>Accepts formulas, compound names, PubChem CIDs, and SMILES prefixed with “smiles:”.</small>{formulaError&&<p role="alert">{formulaError}</p>}<button type="submit" disabled={formulaLoading}>{formulaLoading?"Loading…":"Add structure"}</button></form></div>}
     </main>
   );
 }

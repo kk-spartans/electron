@@ -15,7 +15,8 @@ type ElementKey = string;
 type AtomNode = { id: number; element: ElementKey; x: number; y: number; charge: number; electronOffset: number };
 type BondType = "covalent" | "ionic" | "metallic";
 type BondEdge = { id: number; from: number; to: number; type: BondType; order: 1 | 2 | 3 };
-type FormulaGroup = { id: number; atomIds: number[]; formula: string; name?: string; inferred: boolean };
+type FormulaGroup = { id: number; atomIds: number[]; formula: string; name?: string; source?: string; cid?: number };
+type StructureRecord = { cid?:number;name:string;formula:string;source:string;atoms:Array<{aid:number;atomicNumber:number;x:number;y:number}>;bonds:Array<{from:number;to:number;order:number}> };
 
 type ElementData = {
   name: string; z: number; shells: number[]; config: string; valence: number;
@@ -117,6 +118,9 @@ export default function Home() {
   const nextId = useRef(3);
   const formulaSpawnCount=useRef(0);
   const canvasRef = useRef<HTMLElement>(null);
+  const atomsRef=useRef(atoms);
+  const bondsRef=useRef(bonds);
+  const geometryAnimation=useRef<number|null>(null);
   const gesture = useRef<
     | { type:"pan"|"atom"; id?:number; sx:number; sy:number; ox:number; oy:number }
     | { type:"molecule"; groupId:number; sx:number; sy:number; origins:Map<number,{x:number;y:number}> }
@@ -135,6 +139,18 @@ export default function Home() {
     if (!active) return [];
     return bonds.filter((bond) => bond.from === active.id || bond.to === active.id);
   }, [active, bonds]);
+
+  const bondAngles=useMemo(()=>{
+    if(!active)return[];
+    const neighbors=bonds.flatMap((bond)=>bond.from===active.id?[bond.to]:bond.to===active.id?[bond.from]:[]).map((id)=>atoms.find((atom)=>atom.id===id)).filter((atom):atom is AtomNode=>Boolean(atom));
+    if(neighbors.length<2)return[];
+    const ordered=neighbors.map((atom)=>({atom,angle:Math.atan2(atom.y-active.y,atom.x-active.x)})).sort((a,b)=>a.angle-b.angle);
+    const pairs=ordered.length===2?[[ordered[0],ordered[1]]]:ordered.map((item,index)=>[item,ordered[(index+1)%ordered.length]]);
+    return pairs.map(([first,second])=>{let delta=second.angle-first.angle;if(delta<=0)delta+=Math.PI*2;return{start:first.angle,end:second.angle,angle:delta*180/Math.PI};});
+  },[active,atoms,bonds]);
+
+  useEffect(()=>{atomsRef.current=atoms;},[atoms]);
+  useEffect(()=>{bondsRef.current=bonds;},[bonds]);
 
   const namedCompounds = useMemo(() => {
     const adjacency = new Map<number, number[]>();
@@ -236,7 +252,7 @@ export default function Home() {
     setFormulaGroups((groups)=>groups.filter((group)=>!group.atomIds.some((id)=>removed.has(id))));
   }
 
-  function spawnFormula(formula:string){
+  async function spawnFormula(formula:string){
     const normalized=formula.normalize("NFKC").replace(/\s+/g,"");
     const matches=[...normalized.matchAll(/([A-Z][a-z]?)(\d*)/g)];
     if(!normalized||matches.map((match)=>match[0]).join("")!==normalized){setFormulaError("Use valid, case-sensitive element symbols and whole-number subscripts.");return;}
@@ -244,78 +260,46 @@ export default function Home() {
     const expected=matches.reduce((sum,match)=>sum+(match[2]?Number(match[2]):1),0);
     if(symbols.length!==expected){setFormulaError("One of those element symbols or subscripts is not supported.");return;}
     if(symbols.length>120){setFormulaError(`This formula contains ${symbols.length} atoms; the canvas limit is 120.`);return;}
-    const spawnIndex=formulaSpawnCount.current++;
-    const centerX=((canvasRef.current?.clientWidth??960)/2-pan.x)/scale+1400+(spawnIndex%3)*520,centerY=((canvasRef.current?.clientHeight??620)/2-pan.y)/scale+Math.floor(spawnIndex/3)*520;
-    const capacity=(symbol:string)=>symbol==="H"||["F","Cl","Br","I"].includes(symbol)?1:symbol==="Be"?2:symbol==="B"||symbol==="N"?3:symbol==="O"?2:symbol==="C"?4:symbol==="P"?5:symbol==="S"?6:8;
-    const frequencies=symbols.reduce<Record<string,number>>((result,symbol)=>({...result,[symbol]:(result[symbol]??0)+1}),{});
-    const candidates=symbols.map((symbol,index)=>({symbol,index})).filter(({symbol})=>symbol!=="H");
-    const centralIndex=symbols.length===1?0:(candidates.sort((a,b)=>frequencies[a.symbol]-frequencies[b.symbol]||capacity(b.symbol)-capacity(a.symbol)||a.index-b.index)[0]?.index??0);
-    const ids=symbols.map(()=>nextId.current++);
-    const outer=symbols.map((_,index)=>index).filter((index)=>index!==centralIndex);
-    const large=symbols.length>12;
-    const heavyIndices=symbols.map((symbol,index)=>({symbol,index})).filter(({symbol})=>symbol!=="H").map(({index})=>index);
-    const hydrogenIndices=symbols.map((symbol,index)=>({symbol,index})).filter(({symbol})=>symbol==="H").map(({index})=>index);
-    const structuralPositions=new Map<number,{x:number;y:number}>();
-    if(large){
-      const perRow=Math.max(4,Math.min(8,Math.ceil(Math.sqrt(Math.max(1,heavyIndices.length)*1.6))));
-      heavyIndices.forEach((atomIndex,position)=>{
-        const row=Math.floor(position/perRow),slot=position%perRow;
-        const column=row%2===0?slot:perRow-1-slot;
-        structuralPositions.set(atomIndex,{x:centerX+(column-(perRow-1)/2)*185,y:centerY+(row-(Math.ceil(heavyIndices.length/perRow)-1)/2)*190});
+    setFormulaError("");
+    try{
+      const response=await fetch(`/api/structure?formula=${encodeURIComponent(normalized)}`);
+      if(!response.ok){const failure=await response.json() as {error?:string};setFormulaError(failure.error??"The structure could not be loaded.");return;}
+      const payload=await response.json() as StructureRecord&{error?:string};
+      if(payload.error){setFormulaError(payload.error);return;}
+      if(payload.atoms.length>120){setFormulaError(`This database structure contains ${payload.atoms.length} explicit atoms; the canvas limit is 120.`);return;}
+      const spawnIndex=formulaSpawnCount.current++;
+      const centerX=((canvasRef.current?.clientWidth??960)/2-pan.x)/scale+1650+(spawnIndex%3)*520,centerY=((canvasRef.current?.clientHeight??620)/2-pan.y)/scale+Math.floor(spawnIndex/3)*520;
+      const sourceX=payload.atoms.map((atom)=>atom.x),sourceY=payload.atoms.map((atom)=>atom.y);
+      const sourceCenterX=(Math.min(...sourceX)+Math.max(...sourceX))/2,sourceCenterY=(Math.min(...sourceY)+Math.max(...sourceY))/2;
+      const aidToId=new Map<number,number>(),ids=payload.atoms.map((atom)=>{const id=nextId.current++;aidToId.set(atom.aid,id);return id;});
+      const created:AtomNode[]=payload.atoms.map((atom,index)=>({id:ids[index],element:allSymbols[atom.atomicNumber-1],x:centerX+(atom.x-sourceCenterX)*190,y:centerY-(atom.y-sourceCenterY)*190,charge:0,electronOffset:0}));
+      const atomById=new Map(created.map((atom)=>[atom.id,atom]));
+      const createdBonds:BondEdge[]=payload.bonds.flatMap((bond,index)=>{
+        const from=aidToId.get(bond.from),to=aidToId.get(bond.to);if(!from||!to)return[];
+        const first=atomById.get(from)!,second=atomById.get(to)!,inferred=stableBond(first.element,second.element);
+        return[{id:Date.now()+index,from,to,type:inferred?.type??"covalent",order:Math.max(1,Math.min(3,bond.order)) as 1|2|3}];
       });
-    }
-    const created=symbols.map((element,index)=>{
-      if(large){
-        const heavyPosition=heavyIndices.indexOf(index);
-        if(heavyPosition>=0)return{id:ids[index],element,...structuralPositions.get(index)!,charge:0,electronOffset:0};
-        const hydrogenPosition=hydrogenIndices.indexOf(index),hostPosition=hydrogenPosition%Math.max(1,heavyIndices.length);
-        const host=structuralPositions.get(heavyIndices[hostPosition])??{x:centerX,y:centerY};
-        const layer=Math.floor(hydrogenPosition/Math.max(1,heavyIndices.length));
-        const angle=(hostPosition%2===0?-Math.PI/2:Math.PI/2)+layer*.6;
-        return{id:ids[index],element,x:host.x+Math.cos(angle)*165,y:host.y+Math.sin(angle)*165,charge:0,electronOffset:0};
+      const constrainedAngles:Record<string,number>={H2O:104.5,CO2:180,O3:116.8,O2S:119,SO2:119};
+      const constrainedAngle=constrainedAngles[normalized];
+      if(constrainedAngle){
+        const center=created.map((atom)=>({atom,bonds:createdBonds.filter((bond)=>bond.from===atom.id||bond.to===atom.id)})).sort((a,b)=>b.bonds.length-a.bonds.length)[0];
+        if(center?.bonds.length===2){
+          const neighbors=center.bonds.map((bond)=>atomById.get(bond.from===center.atom.id?bond.to:bond.from)!).filter(Boolean);
+          const reference=Math.atan2(neighbors[0].y-center.atom.y,neighbors[0].x-center.atom.x),distance=Math.hypot(neighbors[1].x-center.atom.x,neighbors[1].y-center.atom.y);
+          neighbors[1].x=center.atom.x+Math.cos(reference+constrainedAngle*Math.PI/180)*distance;
+          neighbors[1].y=center.atom.y+Math.sin(reference+constrainedAngle*Math.PI/180)*distance;
+        }
       }
-      if(index===centralIndex)return{id:ids[index],element,x:centerX,y:centerY,charge:0,electronOffset:0};
-      const position=outer.indexOf(index),angle=-Math.PI/2+position*Math.PI*2/outer.length;
-      return{id:ids[index],element,x:centerX+Math.cos(angle)*230,y:centerY+Math.sin(angle)*230,charge:0,electronOffset:0};
-    });
-    const metals=new Set("Li Be Na Mg Al K Ca Sc Ti V Cr Mn Fe Co Ni Cu Zn Ga Rb Sr Y Zr Nb Mo Tc Ru Rh Pd Ag Cd In Sn Cs Ba".split(" "));
-    let createdBonds:BondEdge[];
-    if(large){
-      const now=Date.now();
-      createdBonds=heavyIndices.slice(1).map((index,position)=>({id:now+position,from:ids[heavyIndices[position]],to:ids[index],type:"covalent" as const,order:1 as const}));
-      const used=new Map<number,number>();
-      createdBonds.forEach((bond)=>{used.set(bond.from,(used.get(bond.from)??0)+bond.order);used.set(bond.to,(used.get(bond.to)??0)+bond.order);});
-      hydrogenIndices.forEach((index,position)=>{
-        const eligible=heavyIndices.map((heavyIndex)=>({index:heavyIndex,remaining:capacity(symbols[heavyIndex])-(used.get(ids[heavyIndex])??0)})).filter((item)=>item.remaining>0).sort((a,b)=>b.remaining-a.remaining||a.index-b.index);
-        const host=eligible[0]?.index??heavyIndices[position%Math.max(1,heavyIndices.length)];
-        if(host===undefined)return;
-        const bond={id:now+createdBonds.length,from:ids[host],to:ids[index],type:"covalent" as const,order:1 as const};
-        createdBonds.push(bond);used.set(ids[host],(used.get(ids[host])??0)+1);used.set(ids[index],1);
-        const hostPosition=created.find((atom)=>atom.id===ids[host])!;
-        const siblings=createdBonds.filter((edge)=>edge.from===ids[host]&&symbols[ids.indexOf(edge.to)]==="H").length;
-        const angle=(siblings%2?Math.PI/2:-Math.PI/2)+(Math.ceil(siblings/2)-1)*.55;
-        const hydrogen=created.find((atom)=>atom.id===ids[index])!;
-        hydrogen.x=hostPosition.x+Math.cos(angle)*165;hydrogen.y=hostPosition.y+Math.sin(angle)*165;
-      });
-      for(let pass=0;pass<2;pass++)createdBonds=createdBonds.map((bond)=>{
-        if(bond.order>=3||symbols[ids.indexOf(bond.from)]==="H"||symbols[ids.indexOf(bond.to)]==="H")return bond;
-        const fromCapacity=capacity(symbols[ids.indexOf(bond.from)]),toCapacity=capacity(symbols[ids.indexOf(bond.to)]);
-        if((used.get(bond.from)??0)>=fromCapacity||(used.get(bond.to)??0)>=toCapacity)return bond;
-        used.set(bond.from,(used.get(bond.from)??0)+1);used.set(bond.to,(used.get(bond.to)??0)+1);
-        return{...bond,order:(bond.order+1) as 2|3};
-      });
-    }else createdBonds=outer.flatMap((index,position)=>{const inferred=stableBond(symbols[centralIndex],symbols[index]);if(!inferred)return[];const order=normalized==="CO"?3:inferred.order;return[{id:Date.now()+position,from:ids[centralIndex],to:ids[index],type:inferred.type,order:order as 1|2|3}];});
-    const charged=created.map((atom)=>createdBonds.some((bond)=>bond.type==="ionic"&&(bond.from===atom.id||bond.to===atom.id))?{...atom,charge:metals.has(atom.element)?1:-1}:atom);
-    const displayFormula=normalized.replace(/\d/g,(digit)=>"₀₁₂₃₄₅₆₇₈₉"[Number(digit)]);
-    const known=Object.values(compoundNames).find((compound)=>compound.formula.normalize("NFKC")===normalized);
-    const groupId=Date.now()+1000;
-    if(large&&canvasRef.current){
-      const minX=Math.min(...charged.map((atom)=>atom.x))-125,maxX=Math.max(...charged.map((atom)=>atom.x))+125,minY=Math.min(...charged.map((atom)=>atom.y))-125,maxY=Math.max(...charged.map((atom)=>atom.y))+125;
-      const canvasWidth=canvasRef.current.clientWidth,canvasHeight=canvasRef.current.clientHeight;
-      const fitScale=Math.max(.25,Math.min(.8,(canvasWidth-36)/(maxX-minX),(canvasHeight-36)/(maxY-minY)));
-      setScale(fitScale);setPan({x:canvasWidth/2-(minX+maxX)/2*fitScale,y:canvasHeight/2-(minY+maxY)/2*fitScale});
-    }
-    setAtoms((items)=>[...items,...charged]);setBonds((items)=>[...items,...createdBonds]);setFormulaGroups((groups)=>[...groups,{id:groupId,atomIds:ids,formula:displayFormula,name:known?.name,inferred:large}]);setSelected([]);setSelectedMolecule(groupId);setSelectedBond(null);setFormulaOpen(false);setFormulaInput("");setFormulaError("");
+      const displayFormula=normalized.replace(/\d/g,(digit)=>"₀₁₂₃₄₅₆₇₈₉"[Number(digit)]);
+      const groupId=Date.now()+1000;
+      if(canvasRef.current){
+        const minX=Math.min(...created.map((atom)=>atom.x))-125,maxX=Math.max(...created.map((atom)=>atom.x))+125,minY=Math.min(...created.map((atom)=>atom.y))-125,maxY=Math.max(...created.map((atom)=>atom.y))+125;
+        const canvasWidth=canvasRef.current.clientWidth,canvasHeight=canvasRef.current.clientHeight;
+        const fitScale=Math.max(.25,Math.min(.82,(canvasWidth-36)/(maxX-minX),(canvasHeight-36)/(maxY-minY)));
+        setScale(fitScale);setPan({x:canvasWidth/2-(minX+maxX)/2*fitScale,y:canvasHeight/2-(minY+maxY)/2*fitScale});
+      }
+      setAtoms((items)=>[...items,...created]);setBonds((items)=>[...items,...createdBonds]);setFormulaGroups((groups)=>[...groups,{id:groupId,atomIds:ids,formula:displayFormula,name:payload.name,source:payload.source,cid:payload.cid}]);setSelected([]);setSelectedMolecule(groupId);setSelectedBond(null);setFormulaOpen(false);setFormulaInput("");setFormulaError("");
+    }catch{setFormulaError("The structure database is unavailable. No structure was guessed.");}
   }
 
   function periodicMatch(symbol:string){
@@ -386,6 +370,47 @@ export default function Home() {
     }
   }
 
+  function idealAngle(symbol:string,neighborCount:number,bondOrder:number){
+    if(symbol==="O"&&neighborCount===2)return 104.5;
+    if(symbol==="N"&&neighborCount===3)return 107;
+    if(symbol==="C"&&neighborCount===2&&bondOrder>=4)return 180;
+    if(neighborCount===2)return 120;
+    if(neighborCount===3)return 120;
+    if(neighborCount>=4)return 109.5;
+    return 180;
+  }
+
+  function relaxBondGeometry(movedId:number){
+    const currentAtoms=atomsRef.current,currentBonds=bondsRef.current,moved=currentAtoms.find((atom)=>atom.id===movedId);
+    if(!moved)return;
+    const connected=currentBonds.filter((bond)=>bond.from===movedId||bond.to===movedId);
+    if(connected.length!==1)return;
+    const joiningBond=connected[0],partnerId=joiningBond.from===movedId?joiningBond.to:joiningBond.from,partner=currentAtoms.find((atom)=>atom.id===partnerId);
+    if(!partner)return;
+    const partnerBonds=currentBonds.filter((bond)=>bond.from===partnerId||bond.to===partnerId);
+    const existingNeighbors=partnerBonds.flatMap((bond)=>{const id=bond.from===partnerId?bond.to:bond.from;return id===movedId?[]:[currentAtoms.find((atom)=>atom.id===id)!];}).filter(Boolean);
+    const targetDistance=joiningBond.type==="ionic"?270:225;
+    let targetAngle=Math.atan2(moved.y-partner.y,moved.x-partner.x);
+    if(existingNeighbors.length){
+      const reference=Math.atan2(existingNeighbors[0].y-partner.y,existingNeighbors[0].x-partner.x);
+      const bondOrder=partnerBonds.reduce((sum,bond)=>sum+bond.order,0);
+      const separation=idealAngle(partner.element,partnerBonds.length,bondOrder)*Math.PI/180;
+      const options=[reference+separation,reference-separation];
+      targetAngle=options.sort((a,b)=>Math.abs(Math.atan2(Math.sin(a-targetAngle),Math.cos(a-targetAngle)))-Math.abs(Math.atan2(Math.sin(b-targetAngle),Math.cos(b-targetAngle))))[0];
+    }
+    const target={x:partner.x+Math.cos(targetAngle)*targetDistance,y:partner.y+Math.sin(targetAngle)*targetDistance};
+    if(geometryAnimation.current)cancelAnimationFrame(geometryAnimation.current);
+    if(window.matchMedia("(prefers-reduced-motion: reduce)").matches){setAtoms((items)=>items.map((atom)=>atom.id===movedId?{...atom,...target}:atom));return;}
+    const origin={x:moved.x,y:moved.y},started=performance.now(),duration=520;
+    const frame=(now:number)=>{
+      const progress=Math.min(1,(now-started)/duration),eased=1-Math.pow(1-progress,4);
+      const position={x:origin.x+(target.x-origin.x)*eased,y:origin.y+(target.y-origin.y)*eased};
+      setAtoms((items)=>items.map((atom)=>atom.id===movedId?{...atom,...position}:atom));
+      if(progress<1)geometryAnimation.current=requestAnimationFrame(frame);else geometryAnimation.current=null;
+    };
+    geometryAnimation.current=requestAnimationFrame(frame);
+  }
+
   function pointerMove(event: React.PointerEvent) {
     const current=gesture.current;
     if (!current) return;
@@ -440,6 +465,7 @@ export default function Home() {
                 return <g key={bond.id} className={`bond-line ${bond.type} ${selectedBond === bond.id ? "selected" : ""}`}><line x1={x1} y1={y1} x2={x2} y2={y2} />{bond.order > 1 && <line x1={x1} y1={y1+8*scale} x2={x2} y2={y2+8*scale} />}{bond.type === "covalent" && Array.from({length:bond.order},(_,i)=><g key={i}><circle className="shared-electron" style={{fill:fromColor}} cx={mx-5*scale} cy={my+(i-(bond.order-1)/2)*10*scale} r={3*scale} /><circle className="shared-electron" style={{fill:toColor}} cx={mx+5*scale} cy={my+(i-(bond.order-1)/2)*10*scale} r={3*scale} /></g>)}</g>;
               })}
               {dipoleAttractions.map((attraction)=>{const x1=pan.x+attraction.from.x*scale,y1=pan.y+attraction.from.y*scale,x2=pan.x+attraction.to.x*scale,y2=pan.y+attraction.to.y*scale,mx=(x1+x2)/2,my=(y1+y2)/2;return <g className="dipole-attraction" key={attraction.id}><line x1={x1} y1={y1} x2={x2} y2={y2}/><text x={x1} y={y1-9}>δ+</text><text x={x2} y={y2-9}>δ−</text><text className="dipole-label" x={mx} y={my-7}>dipole–dipole</text></g>;})}
+              {active&&bondAngles.map((guide,index)=>{const cx=pan.x+active.x*scale,cy=pan.y+active.y*scale,r=58*scale,startX=cx+Math.cos(guide.start)*r,startY=cy+Math.sin(guide.start)*r,endX=cx+Math.cos(guide.end)*r,endY=cy+Math.sin(guide.end)*r;let middle=guide.start+(guide.end-guide.start)/2;if(guide.end<guide.start)middle+=Math.PI;return <g className="angle-guide" key={`${active.id}-${index}`}><path d={`M ${startX} ${startY} A ${r} ${r} 0 ${guide.angle>180?1:0} 1 ${endX} ${endY}`}/><text x={cx+Math.cos(middle)*(r+17)} y={cy+Math.sin(middle)*(r+17)}>{guide.angle.toFixed(1)}°</text></g>;})}
             </svg>
             {formulaGroups.flatMap((group)=>{
               const members=group.atomIds.map((id)=>atoms.find((atom)=>atom.id===id)).filter((atom):atom is AtomNode=>Boolean(atom));
@@ -454,7 +480,7 @@ export default function Home() {
             })}
             {bonds.map((bond) => { const from=atoms.find((atom)=>atom.id===bond.from),to=atoms.find((atom)=>atom.id===bond.to); if(!from||!to)return null; const mx=pan.x+(from.x+to.x)*scale/2,my=pan.y+(from.y+to.y)*scale/2; return <button type="button" key={`target-${bond.id}`} className="bond-target" style={{transform:`translate(${mx-42}px,${my-30}px)`}} aria-label={`Inspect ${bond.type} bond`} onClick={(event)=>{event.stopPropagation();setSelectedBond(bond.id);setSelectedMolecule(null);setSelected([]);}}>{scale>=.45?bond.type:""}</button>;})}
             {namedCompounds.map((compound) => <div className="compound-label" key={`${compound.formula}-${compound.x}-${compound.y}`} style={{ transform: `translate(${pan.x + compound.x * scale}px, ${pan.y + compound.y * scale}px)` }}><b>{compound.formula}</b><span>{compound.name}</span></div>)}
-            {formulaGroups.filter((group)=>!group.name).flatMap((group)=>{const members=group.atomIds.map((id)=>atoms.find((atom)=>atom.id===id)).filter((atom):atom is AtomNode=>Boolean(atom));if(members.length!==group.atomIds.length)return[];const x=members.reduce((sum,atom)=>sum+atom.x,0)/members.length,y=Math.max(...members.map((atom)=>atom.y))+125;return <div className="compound-label imported" key={group.id} style={{transform:`translate(${pan.x+x*scale}px,${pan.y+y*scale}px)`}}><b>{group.formula}</b><span>{group.inferred?"inferred structural scaffold":"imported formula"}</span></div>;})}
+            {formulaGroups.filter((group)=>!Object.values(compoundNames).some((compound)=>compound.name===group.name)).flatMap((group)=>{const members=group.atomIds.map((id)=>atoms.find((atom)=>atom.id===id)).filter((atom):atom is AtomNode=>Boolean(atom));if(members.length!==group.atomIds.length)return[];const x=members.reduce((sum,atom)=>sum+atom.x,0)/members.length,y=Math.max(...members.map((atom)=>atom.y))+125;return <div className="compound-label imported" key={group.id} style={{transform:`translate(${pan.x+x*scale}px,${pan.y+y*scale}px)`}}><b>{group.formula}</b><span>{group.name??group.source??"database structure"}</span></div>;})}
             {atoms.map((atom) => {
               const item = elements[atom.element]; const isSelected = selectedAtomIds.has(atom.id);
               const sharedElectrons=bonds.filter((bond)=>bond.type==="covalent"&&(bond.from===atom.id||bond.to===atom.id)).reduce((total,bond)=>total+bond.order,0);
@@ -464,7 +490,7 @@ export default function Home() {
                 onClick={(event) => { event.stopPropagation(); if(!(event.target as Element).closest(".diagram-electron"))selectAtom(atom.id,event.shiftKey); }}
                 onKeyDown={(event)=>{if(event.key==="Enter"||event.key===" "){event.preventDefault();selectAtom(atom.id,event.shiftKey);}}}
                 onPointerDown={(event) => { event.stopPropagation(); if((event.target as Element).closest(".diagram-electron"))return; event.currentTarget.setPointerCapture(event.pointerId); gesture.current = { type: "atom", id: atom.id, sx: event.clientX, sy: event.clientY, ox: atom.x, oy: atom.y }; }}
-                onPointerMove={pointerMove} onPointerUp={() => { const current=gesture.current;const movedId=current?.type==="atom"?current.id:undefined; gesture.current = null; if (movedId) window.setTimeout(() => settleAtom(movedId), 0); }} onPointerCancel={()=>{gesture.current=null;}} onLostPointerCapture={()=>{gesture.current=null;}} aria-label={`${item.name} atom`}>
+                onPointerMove={pointerMove} onPointerUp={() => { const current=gesture.current;const movedId=current?.type==="atom"?current.id:undefined; gesture.current = null; if (movedId) { window.setTimeout(() => settleAtom(movedId), 0); window.setTimeout(()=>relaxBondGeometry(movedId),80); } }} onPointerCancel={()=>{gesture.current=null;}} onLostPointerCapture={()=>{gesture.current=null;}} aria-label={`${item.name} atom`}>
                 <AtomScene symbol={atom.element} atomicNumber={item.z} subshells={subshellsForElectronCount(item.z - atom.charge + atom.electronOffset)} sharedElectrons={sharedElectrons} sharedFrom={sharedFrom} onElectronSelect={(electron)=>{setSelected([atom.id]);setSelectedBond(null);setSelectedElectron({atomId:atom.id,...electron});}} />
                 {atom.charge !== 0 && <span className={`atom-charge ${atom.charge > 0 ? "positive" : "negative"}`}>{atom.charge > 0 ? `+${atom.charge}` : atom.charge}</span>}
               </div>;
@@ -511,9 +537,9 @@ function MoleculeInspector({group,atoms,bonds,onClose,onDelete}:{group:FormulaGr
     return Boolean(from&&to&&Math.abs(pauling(from.element)-pauling(to.element))>=.4);
   }).length;
   return <div className="molecule-inspector">
-    <div className="inspector-title"><div><small>Selected molecule</small><h1>{group.name??group.formula}</h1><code>{group.formula}</code></div><button type="button" aria-label="Deselect molecule" onClick={onClose}><X/></button></div>
+    <div className="inspector-title"><div><small>Selected molecule</small><h1>{group.name??group.formula}</h1><code>{group.formula}{group.cid?` · PubChem CID ${group.cid}`:""}</code></div><button type="button" aria-label="Deselect molecule" onClick={onClose}><X/></button></div>
     <section><h2>Composition</h2><div className="molecule-composition">{Object.entries(counts).map(([symbol,count])=><span key={symbol}><b>{symbol}</b>{count}</span>)}</div><p>{members.length} atoms · net charge {totalCharge>0?`+${totalCharge}`:totalCharge}</p></section>
-    <section><h2>Structure</h2><div className="learning-metrics"><div><b>{moleculeBonds.length}</b><span>bonds</span></div><div><b>{covalent.length}</b><span>covalent</span></div><div><b>{polar}</b><span>polar</span></div></div>{ionic.length>0&&<p>{ionic.length} ionic interaction{ionic.length===1?" is":"s are"} shown.</p>}{group.inferred?<p className="structure-note">This is a valence-aware structural scaffold inferred from the molecular formula. The formula fixes composition, but not connectivity or the molecule&apos;s isomer.</p>:<p>The displayed bonds form this molecule&apos;s current connected structure.</p>}</section>
+    <section><h2>Structure</h2><div className="learning-metrics"><div><b>{moleculeBonds.length}</b><span>bonds</span></div><div><b>{covalent.length}</b><span>covalent</span></div><div><b>{polar}</b><span>polar</span></div></div>{ionic.length>0&&<p>{ionic.length} ionic interaction{ionic.length===1?" is":"s are"} shown.</p>}<p className="structure-note">Connectivity, bond orders, and drawing coordinates are loaded from {group.source??"the structure database"}; they are not inferred from the formula.</p></section>
     <section><h2>Canvas interaction</h2><p>Drag anywhere in the outlined molecular area to move every atom and bond together. Individual atoms and bonds remain selectable.</p></section>
     <button type="button" className="remove-bond" onClick={onDelete}><Trash/> Delete molecule</button>
   </div>;

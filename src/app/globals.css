@@ -49,6 +49,7 @@ button { color:inherit; font:inherit; }
 .bond-line text { fill:#c7d0c9; paint-order:stroke; stroke:#0d110e; stroke-width:5px; font:9px var(--font-geist-mono); text-anchor:middle; }
 .shared-electron { stroke:#0d110e; stroke-width:1.5; pointer-events:none; }
 .dipole-attraction line { stroke:var(--violet); stroke-width:1.5; stroke-dasharray:3 7; opacity:.8; }.dipole-attraction text { fill:#d8baff; paint-order:stroke; stroke:#0d110e; stroke-width:4px; text-anchor:middle; font:8px var(--font-geist-mono); }.dipole-attraction .dipole-label { fill:#c7a8e7; font-size:7px; }
+.angle-guide { pointer-events:none; }.angle-guide path { fill:none; stroke:#ffc26b; stroke-width:1.25; stroke-dasharray:2 2; }.angle-guide text { fill:#ffd693; paint-order:stroke; stroke:#0d110e; stroke-width:4px; text-anchor:middle; dominant-baseline:middle; font:8px var(--font-geist-mono); }
 .bond-target { position:absolute; left:0; top:0; width:84px; height:28px; z-index:3; border:0; background:transparent; color:#c7d0c9; font:9px var(--font-geist-mono); cursor:pointer; text-shadow:0 1px 3px #000; }.bond-target:hover,.bond-target:focus-visible { color:var(--accent); outline:1px solid var(--line); border-radius:6px; background:#111611cc; }
 .compound-label { position:absolute; left:0; top:0; z-index:2; display:grid; justify-items:center; gap:2px; width:150px; margin-left:-75px; padding:7px 10px; border:1px solid var(--line); border-radius:8px; background:#111611e8; pointer-events:none; box-shadow:0 8px 24px #0005; }.compound-label b { color:var(--accent); font:12px var(--font-geist-mono); }.compound-label span { color:#c4cec6; font-size:10px; }
 .compound-label.imported { width:220px; margin-left:-110px; }.compound-label.imported b { overflow-wrap:anywhere; text-align:center; }
@@ -56,7 +57,7 @@ button { color:inherit; font:inherit; }
 .molecule-region:hover { border-color:#91a09066; background:#c7ff5c09; }
 .molecule-region.selected { border-color:#c7ff5caa; background:#c7ff5c0d; box-shadow:inset 0 0 0 1px #c7ff5c16; }
 .molecule-region:focus-visible { border-color:var(--accent); box-shadow:0 0 0 2px #0d110e,0 0 0 4px var(--accent); }
-.canvas-atom { position:absolute; left:0; top:0; width:200px; height:200px; padding:0; border:0; background:transparent; cursor:move; border-radius:50%; transition:filter .18s ease; }
+.canvas-atom { position:absolute; z-index:2; left:0; top:0; width:200px; height:200px; padding:0; border:0; background:transparent; cursor:move; border-radius:50%; transition:filter .18s ease; }
 .canvas-atom:hover { filter:brightness(1.15); }
 .canvas-atom.selected { outline:1px solid var(--accent); outline-offset:4px; }
 .atom-diagram { width:100%; height:100%; overflow:visible; }

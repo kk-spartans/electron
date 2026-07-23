@@ -54,6 +54,34 @@ function generatedElement(symbol: string, z: number): ElementData {
   return { name: reference.name, z, shells, valence, subshells, config: reference.electronic_configuration, note: reference.name + " is shown using its ground-state filling order. Bonding behavior depends on its outer electrons." };
 }
 const elements: Record<string, ElementData> = Object.fromEntries(allSymbols.map((symbol, index) => [symbol, coreElements[symbol] ?? generatedElement(symbol, index + 1)]));
+const metals = new Set("Li Be Na Mg Al K Ca Sc Ti V Cr Mn Fe Co Ni Cu Zn Ga Rb Sr Y Zr Nb Mo Tc Ru Rh Pd Ag Cd In Sn Cs Ba La Ce Pr Nd Pm Sm Eu Gd Tb Dy Ho Er Tm Yb Lu Hf Ta W Re Os Ir Pt Au Hg Tl Pb Bi Fr Ra Ac Th Pa U Np Pu Am Cm Bk Cf Es Fm Md No Lr Rf Db Sg Bh Hs Mt Ds Rg Cn Nh Fl Mc Lv".split(" "));
+const nobleGases = new Set(["He","Ne","Ar","Kr","Xe","Rn","Og"]);
+
+function ionicDonationLimit(symbol: string) {
+  if (["Li","Na","K","Rb","Cs","Fr"].includes(symbol)) return 1;
+  if (["Be","Mg","Ca","Sr","Ba","Ra"].includes(symbol)) return 2;
+  if (["Al","Ga","In"].includes(symbol)) return 3;
+  return Math.max(1, Math.min(4, elements[symbol]?.valence ?? 2));
+}
+
+function ionicAcceptanceLimit(symbol: string) {
+  if (["F","Cl","Br","I","At","Ts"].includes(symbol)) return 1;
+  if (["O","S","Se","Te","Po"].includes(symbol)) return 2;
+  if (["N","P","As","Sb"].includes(symbol)) return 3;
+  return Math.max(1, Math.min(4, 8 - (elements[symbol]?.valence ?? 4)));
+}
+
+function applyIonicCharges(atomList: AtomNode[], bondList: BondEdge[]) {
+  const charges = new Map(atomList.map((atom) => [atom.id, 0]));
+  bondList.filter((bond) => bond.type === "ionic").forEach((bond) => {
+    const from = atomList.find((atom) => atom.id === bond.from), to = atomList.find((atom) => atom.id === bond.to);
+    if (!from || !to || metals.has(from.element) === metals.has(to.element)) return;
+    const donor = metals.has(from.element) ? from : to, receiver = donor === from ? to : from;
+    charges.set(donor.id, (charges.get(donor.id) ?? 0) + bond.order);
+    charges.set(receiver.id, (charges.get(receiver.id) ?? 0) - bond.order);
+  });
+  return atomList.map((atom) => ({ ...atom, charge: charges.get(atom.id) ?? 0 }));
+}
 
 function subshellsForElectronCount(count: number) {
   let remaining = Math.max(0, count);
@@ -84,6 +112,7 @@ const compoundNames: Record<string, { formula: string; name: string; bondUnits: 
   O2S: { formula: "SO₂", name: "sulfur dioxide", bondUnits: 4 }, O3S: { formula: "SO₃", name: "sulfur trioxide", bondUnits: 6 },
   CaCl2: { formula: "CaCl₂", name: "calcium chloride", bondUnits: 2 }, Cl2Mg: { formula: "MgCl₂", name: "magnesium chloride", bondUnits: 2 },
   Fe2O3: { formula: "Fe₂O₃", name: "iron(III) oxide", bondUnits: 6 }, Na2O: { formula: "Na₂O", name: "sodium oxide", bondUnits: 2 },
+  LiO2: { formula: "LiO₂", name: "lithium superoxide", bondUnits: 2 },
   C6H6: { formula: "C₆H₆", name: "benzene", bondUnits: 12 },
 };
 
@@ -118,7 +147,9 @@ export default function Home() {
   const [characterFilter,setCharacterFilter]=useState("all");
   const [formulaGroups,setFormulaGroups]=useState<FormulaGroup[]>([]);
   const [selectedMolecule,setSelectedMolecule]=useState<number|null>(null);
+  const [validationNotice,setValidationNotice]=useState("");
   const nextId = useRef(3);
+  const validationSequence=useRef(0);
   const formulaSpawnCount=useRef(0);
   const canvasRef = useRef<HTMLElement>(null);
   const atomsRef=useRef(atoms);
@@ -247,8 +278,11 @@ export default function Home() {
 
   function deleteAtoms(ids:number[]){
     const removed=new Set(ids);
-    setAtoms((items)=>items.filter((atom)=>!removed.has(atom.id)));
-    setBonds((items)=>items.filter((bond)=>!removed.has(bond.from)&&!removed.has(bond.to)));
+    const remainingBonds=bondsRef.current.filter((bond)=>!removed.has(bond.from)&&!removed.has(bond.to));
+    const remainingAtoms=applyIonicCharges(atomsRef.current.filter((atom)=>!removed.has(atom.id)),remainingBonds);
+    bondsRef.current=remainingBonds;atomsRef.current=remainingAtoms;
+    setAtoms(remainingAtoms);
+    setBonds(remainingBonds);
     setSelected([]);
     setSelectedMolecule(null);
     setSelectedElectron((current)=>current&&removed.has(current.atomId)?null:current);
@@ -306,7 +340,8 @@ export default function Home() {
         const fitScale=Math.max(.25,Math.min(.82,(canvasWidth-36)/(maxX-minX),(canvasHeight-36)/(maxY-minY)));
         setScale(fitScale);setPan({x:canvasWidth/2-(minX+maxX)/2*fitScale,y:canvasHeight/2-(minY+maxY)/2*fitScale});
       }
-      setAtoms((items)=>[...items,...created]);setBonds((items)=>[...items,...createdBonds]);setFormulaGroups((groups)=>[...groups,{id:groupId,atomIds:ids,formula:displayFormula,name:payload.name,source:payload.source,cid:payload.cid}]);setSelected([]);setSelectedMolecule(groupId);setSelectedBond(null);setFormulaOpen(false);setFormulaInput("");setFormulaError("");
+      const chargedCreated=applyIonicCharges(created,createdBonds);
+      setAtoms((items)=>[...items,...chargedCreated]);setBonds((items)=>[...items,...createdBonds]);setFormulaGroups((groups)=>[...groups,{id:groupId,atomIds:ids,formula:displayFormula,name:payload.name,source:payload.source,cid:payload.cid}]);setSelected([]);setSelectedMolecule(groupId);setSelectedBond(null);setFormulaOpen(false);setFormulaInput("");setFormulaError("");
     }catch{setFormulaError("The structure database is unavailable. No structure was guessed.");}
     finally{setFormulaLoading(false);}
   }
@@ -326,9 +361,7 @@ export default function Home() {
   }
 
   function stableBond(first: ElementKey, second: ElementKey): { type: BondType; order: 1 | 2 | 3 } | null {
-    const noble = new Set(["He","Ne","Ar","Kr","Xe","Rn","Og"]);
-    if (noble.has(first) || noble.has(second)) return null;
-    const metals = new Set("Li Be Na Mg Al K Ca Sc Ti V Cr Mn Fe Co Ni Cu Zn Ga Rb Sr Y Zr Nb Mo Tc Ru Rh Pd Ag Cd In Sn Cs Ba La Ce Pr Nd Pm Sm Eu Gd Tb Dy Ho Er Tm Yb Lu Hf Ta W Re Os Ir Pt Au Hg Tl Pb Bi Fr Ra Ac Th Pa U Np Pu Am Cm Bk Cf Es Fm Md No Lr Rf Db Sg Bh Hs Mt Ds Rg Cn Nh Fl Mc Lv".split(" "));
+    if (nobleGases.has(first) || nobleGases.has(second)) return null;
     const firstMetal = metals.has(first);
     const secondMetal = metals.has(second);
     if (firstMetal && secondMetal) return { type: "metallic", order: 1 };
@@ -339,44 +372,74 @@ export default function Home() {
     return { type: "covalent", order: 1 };
   }
 
-  function settleAtom(id: number) {
-    const moved = atoms.find((atom) => atom.id === id);
-    if (!moved) return;
-    const nearby = atoms
+  async function settleAtom(id: number) {
+    const currentAtoms=atomsRef.current;
+    const moved = currentAtoms.find((atom) => atom.id === id);
+    if (!moved) return false;
+    const nearby = currentAtoms
       .filter((atom) => atom.id !== id)
       .map((atom) => ({ atom, distance: Math.hypot(atom.x - moved.x, atom.y - moved.y) }))
       .filter((item) => item.distance <= 225)
       .sort((a, b) => a.distance - b.distance);
 
-    setBonds((current) => {
-      const kept = current.filter((bond) => {
+      const kept = bondsRef.current.filter((bond) => {
         if (bond.from !== id && bond.to !== id) return true;
         const otherId = bond.from === id ? bond.to : bond.from;
-        const other = atoms.find((atom) => atom.id === otherId);
+        const other = currentAtoms.find((atom) => atom.id === otherId);
         return Boolean(other && Math.hypot(other.x - moved.x, other.y - moved.y) <= 310);
       });
       const existingPartners = new Set(kept.flatMap((bond) => bond.from === id ? [bond.to] : bond.to === id ? [bond.from] : []));
       const proposed = nearby.filter(({atom}) => !existingPartners.has(atom.id)).map(({atom,distance}) => ({ atom, distance, inferred: stableBond(moved.element, atom.element) })).filter((item): item is {atom:AtomNode;distance:number;inferred:{type:BondType;order:1|2|3}} => Boolean(item.inferred)).sort((a,b)=>Number(a.atom.element===moved.element)-Number(b.atom.element===moved.element)||a.distance-b.distance);
-      if (!proposed.length) return kept;
       const capacity = (atom: AtomNode) => atom.element === "H" || ["F","Cl","Br","I"].includes(atom.element) ? 1 : atom.element === "Be" ? 2 : atom.element === "B" || atom.element === "N" ? 3 : atom.element === "O" ? 2 : atom.element === "C" ? 4 : atom.element === "P" ? 5 : atom.element === "S" ? 6 : 8;
-      const used = (atomId: number) => kept.filter((bond) => bond.from === atomId || bond.to === atomId).reduce((total,bond) => total+bond.order,0);
-      let remaining=capacity(moved)-used(id);
-      const accepted=proposed.filter(({atom,inferred})=>{if(inferred.order>remaining||used(atom.id)+inferred.order>capacity(atom))return false;remaining-=inferred.order;return true;});
-      if (!accepted.length) return kept;
+      const nextBonds=[...kept];
+      const ionicCount=(atomId:number)=>nextBonds.filter((bond)=>bond.type==="ionic"&&(bond.from===atomId||bond.to===atomId)).reduce((sum,bond)=>sum+bond.order,0);
+      const occupied=(atomId:number)=>nextBonds.filter((bond)=>bond.from===atomId||bond.to===atomId).reduce((sum,bond)=>{
+        if(bond.type==="covalent")return sum+bond.order;
+        const atom=currentAtoms.find((item)=>item.id===atomId);
+        return sum+(atom&&!metals.has(atom.element)?bond.order:0);
+      },0);
       const now=Date.now();
-      return [...kept,...accepted.map(({atom,inferred},index)=>({id:now+index,from:id,to:atom.id,...inferred}))];
-    });
-
-    if (nearby.length === 1) {
-      const inferred = stableBond(moved.element, nearby[0].atom.element);
-      if (!inferred) return;
-      if (inferred.type === "ionic") {
-        const metals = new Set("Li Be Na Mg Al K Ca Sc Ti V Cr Mn Fe Co Ni Cu Zn Ga Rb Sr Y Zr Nb Mo Tc Ru Rh Pd Ag Cd In Sn Cs Ba La Hf Ta W Re Os Ir Pt Au Hg Tl Pb Bi Fr Ra Ac Th Pa U".split(" "));
-        setAtoms((items) => items.map((atom) => atom.id === id || atom.id === nearby[0].atom.id
-          ? { ...atom, charge: metals.has(atom.element) ? 1 : -1 }
-          : atom));
+      proposed.forEach(({atom,inferred},index)=>{
+        let candidate=inferred;
+        if(candidate.type==="ionic"){
+          const donor=metals.has(moved.element)?moved:atom,receiver=donor===moved?atom:moved;
+          if(ionicCount(donor.id)+candidate.order>ionicDonationLimit(donor.element)||ionicCount(receiver.id)+candidate.order>ionicAcceptanceLimit(receiver.element))return;
+        }else if(candidate.type==="covalent"){
+          if(moved.element==="O"&&atom.element==="O"&&(ionicCount(moved.id)>0||ionicCount(atom.id)>0))candidate={type:"covalent",order:1};
+          if(occupied(moved.id)+candidate.order>capacity(moved)||occupied(atom.id)+candidate.order>capacity(atom))return;
+        }else if(occupied(moved.id)+candidate.order>capacity(moved)||occupied(atom.id)+candidate.order>capacity(atom))return;
+        nextBonds.push({id:now+index,from:id,to:atom.id,...candidate});
+      });
+      const charged=applyIonicCharges(currentAtoms,nextBonds);
+      const sequence=++validationSequence.current;
+      try{
+        const response=await fetch("/api/validate-structure",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({atoms:charged,bonds:nextBonds})});
+        if(!response.ok)throw new Error("RDKit validation request failed");
+        const result=await response.json() as {valid:boolean;reason?:string};
+        if(sequence!==validationSequence.current)return false;
+        if(!result.valid){
+          setValidationNotice(result.reason??"RDKit rejected that bonding arrangement.");
+          window.setTimeout(()=>setValidationNotice(""),4200);
+          return false;
+        }
+        setValidationNotice("");
+        bondsRef.current=nextBonds;atomsRef.current=charged;
+        setBonds(nextBonds);setAtoms(charged);
+        return true;
+      }catch{
+        if(sequence===validationSequence.current){
+          setValidationNotice("RDKit validation is unavailable, so no bond was changed.");
+          window.setTimeout(()=>setValidationNotice(""),4200);
+        }
+        return false;
       }
-    }
+  }
+
+  function removeBond(id:number){
+    const nextBonds=bondsRef.current.filter((bond)=>bond.id!==id);
+    const charged=applyIonicCharges(atomsRef.current,nextBonds);
+    bondsRef.current=nextBonds;atomsRef.current=charged;
+    setBonds(nextBonds);setAtoms(charged);setSelectedBond(null);
   }
 
   function idealAngle(symbol:string,neighborCount:number,bondOrder:number){
@@ -465,6 +528,7 @@ export default function Home() {
             <span><Atom /> Ringed atom electrons appear in shared pairs</span>
             <output className="zoom-level" aria-label="Canvas zoom">{Math.round(scale * 100)}%</output>
           </div>
+          {validationNotice&&<div className="validation-notice" role="status">{validationNotice}</div>}
           <div className="canvas-world">
             <svg className="bond-layer" width="1600" height="1000">
               {bonds.map((bond) => {
@@ -472,7 +536,8 @@ export default function Home() {
                 const x1=pan.x+from.x*scale,y1=pan.y+from.y*scale,x2=pan.x+to.x*scale,y2=pan.y+to.y*scale,mx=(x1+x2)/2,my=(y1+y2)/2;
                 const fromSubshells=subshellsForElectronCount(elements[from.element].z-from.charge+from.electronOffset),toSubshells=subshellsForElectronCount(elements[to.element].z-to.charge+to.electronOffset);
                 const fromColor=subshellColors[fromSubshells.at(-1)?.kind ?? "s"],toColor=subshellColors[toSubshells.at(-1)?.kind ?? "s"];
-                return <g key={bond.id} className={`bond-line ${bond.type} ${selectedBond === bond.id ? "selected" : ""}`}><line x1={x1} y1={y1} x2={x2} y2={y2} />{bond.order > 1 && <line x1={x1} y1={y1+8*scale} x2={x2} y2={y2+8*scale} />}{bond.type === "covalent" && Array.from({length:bond.order},(_,i)=><g key={i}><circle className="shared-electron" style={{fill:fromColor}} cx={mx-5*scale} cy={my+(i-(bond.order-1)/2)*10*scale} r={3*scale} /><circle className="shared-electron" style={{fill:toColor}} cx={mx+5*scale} cy={my+(i-(bond.order-1)/2)*10*scale} r={3*scale} /></g>)}</g>;
+                const superoxide=bond.type==="covalent"&&bond.order===1&&from.element==="O"&&to.element==="O"&&bonds.some((item)=>item.type==="ionic"&&[item.from,item.to].some((atomId)=>atomId===from.id||atomId===to.id)&&[item.from,item.to].some((atomId)=>atoms.find((atom)=>atom.id===atomId)?.element==="Li"));
+                return <g key={bond.id} className={`bond-line ${bond.type} ${selectedBond === bond.id ? "selected" : ""}`}><line x1={x1} y1={y1} x2={x2} y2={y2} />{bond.order > 1 && <line x1={x1} y1={y1+8*scale} x2={x2} y2={y2+8*scale} />}{bond.type === "covalent" && Array.from({length:bond.order},(_,i)=><g key={i}><circle className="shared-electron" style={{fill:fromColor}} cx={mx-5*scale} cy={my+(i-(bond.order-1)/2)*10*scale} r={3*scale} /><circle className="shared-electron" style={{fill:toColor}} cx={mx+5*scale} cy={my+(i-(bond.order-1)/2)*10*scale} r={3*scale} /></g>)}{superoxide&&<text className="delocalized-charge" x={mx} y={my-18*scale}>−1 over O₂</text>}</g>;
               })}
               {dipoleAttractions.map((attraction)=>{const x1=pan.x+attraction.from.x*scale,y1=pan.y+attraction.from.y*scale,x2=pan.x+attraction.to.x*scale,y2=pan.y+attraction.to.y*scale,mx=(x1+x2)/2,my=(y1+y2)/2;return <g className="dipole-attraction" key={attraction.id}><line x1={x1} y1={y1} x2={x2} y2={y2}/><text x={x1} y={y1-9}>δ+</text><text x={x2} y={y2-9}>δ−</text><text className="dipole-label" x={mx} y={my-7}>dipole–dipole</text></g>;})}
               {active&&bondAngles.map((guide,index)=>{const cx=pan.x+active.x*scale,cy=pan.y+active.y*scale,r=58*scale,startX=cx+Math.cos(guide.start)*r,startY=cy+Math.sin(guide.start)*r,endX=cx+Math.cos(guide.end)*r,endY=cy+Math.sin(guide.end)*r;let middle=guide.start+(guide.end-guide.start)/2;if(guide.end<guide.start)middle+=Math.PI;return <g className="angle-guide" key={`${active.id}-${index}`}><path d={`M ${startX} ${startY} A ${r} ${r} 0 ${guide.angle>180?1:0} 1 ${endX} ${endY}`}/><text x={cx+Math.cos(middle)*(r+17)} y={cy+Math.sin(middle)*(r+17)}>{guide.angle.toFixed(1)}°</text></g>;})}
@@ -500,7 +565,7 @@ export default function Home() {
                 onClick={(event) => { event.stopPropagation(); if(!(event.target as Element).closest(".diagram-electron"))selectAtom(atom.id,event.shiftKey); }}
                 onKeyDown={(event)=>{if(event.key==="Enter"||event.key===" "){event.preventDefault();selectAtom(atom.id,event.shiftKey);}}}
                 onPointerDown={(event) => { event.stopPropagation(); if((event.target as Element).closest(".diagram-electron"))return; event.currentTarget.setPointerCapture(event.pointerId); gesture.current = { type: "atom", id: atom.id, sx: event.clientX, sy: event.clientY, ox: atom.x, oy: atom.y }; }}
-                onPointerMove={pointerMove} onPointerUp={() => { const current=gesture.current;const movedId=current?.type==="atom"?current.id:undefined; gesture.current = null; if (movedId) { window.setTimeout(() => settleAtom(movedId), 0); window.setTimeout(()=>relaxBondGeometry(movedId),80); } }} onPointerCancel={()=>{gesture.current=null;}} onLostPointerCapture={()=>{gesture.current=null;}} aria-label={`${item.name} atom`}>
+                onPointerMove={pointerMove} onPointerUp={() => { const current=gesture.current;const movedId=current?.type==="atom"?current.id:undefined; gesture.current = null; if (movedId) void settleAtom(movedId).then((valid)=>{if(valid)relaxBondGeometry(movedId);}).catch(()=>setValidationNotice("RDKit validation failed.")); }} onPointerCancel={()=>{gesture.current=null;}} onLostPointerCapture={()=>{gesture.current=null;}} aria-label={`${item.name} atom`}>
                 <AtomScene symbol={atom.element} atomicNumber={item.z} subshells={subshellsForElectronCount(item.z - atom.charge + atom.electronOffset)} sharedElectrons={sharedElectrons} sharedFrom={sharedFrom} onElectronSelect={(electron)=>{setSelected([atom.id]);setSelectedBond(null);setSelectedElectron({atomId:atom.id,...electron});}} />
                 {atom.charge !== 0 && <span className={`atom-charge ${atom.charge > 0 ? "positive" : "negative"}`}>{atom.charge > 0 ? `+${atom.charge}` : atom.charge}</span>}
               </div>;
@@ -517,13 +582,13 @@ export default function Home() {
         </section>
 
         <aside className="atom-inspector">
-          {activeBond ? <BondInspector bond={activeBond} atoms={atoms} onClose={() => setSelectedBond(null)} onRemove={() => { setBonds((items) => items.filter((item) => item.id !== activeBond.id)); setAtoms((items) => items.map((atom) => atom.id === activeBond.from || atom.id === activeBond.to ? {...atom,charge:0}:atom)); setSelectedBond(null); }} /> : activeMolecule ? <MoleculeInspector group={activeMolecule} atoms={atoms} bonds={bonds} onClose={()=>setSelectedMolecule(null)} onDelete={()=>deleteAtoms(activeMolecule.atomIds)}/> : active && activeElement ? <>
+          {activeBond ? <BondInspector bond={activeBond} atoms={atoms} onClose={() => setSelectedBond(null)} onRemove={() => removeBond(activeBond.id)} /> : activeMolecule ? <MoleculeInspector group={activeMolecule} atoms={atoms} bonds={bonds} onClose={()=>setSelectedMolecule(null)} onDelete={()=>deleteAtoms(activeMolecule.atomIds)}/> : active && activeElement ? <>
             <div className="inspector-title"><div><small>Selected atom</small><h1>{activeElement.name}</h1><code>{activeElement.config}</code></div><button type="button" aria-label="Deselect atom" onClick={() => setSelected([])}><X /></button></div>
             {selectedElectron?.atomId===active.id&&<section className="selected-electron"><h2>Selected electron</h2><div><i style={{background:subshellColors[selectedElectron.kind]}}/><b>{selectedElectron.label}</b><span>{selectedElectron.kind} subshell</span></div><p>{selectedElectron.source?`Shared onto ${active.element} from ${selectedElectron.source}.`:selectedElectron.shared?"This valence electron is contributed to a covalent bond.":"This electron remains owned by the atom."}</p></section>}
             <section><h2>Occupied subshells by shell</h2><div className="shell-groups">{[...new Set(activeSubshells.map((subshell)=>subshell.shell))].map((shell)=>{const shellSubshells=activeSubshells.filter((subshell)=>subshell.shell===shell);const total=shellSubshells.reduce((sum,subshell)=>sum+subshell.count,0);const shared=shell===Math.max(...activeSubshells.map((subshell)=>subshell.shell))?bondSummary.filter((bond)=>bond.type==="covalent").reduce((sum,bond)=>sum+bond.order,0):0;return <div className="shell-group" key={shell}><div className="shell-total"><b>Shell {shell}</b><span>{total} owned electron{total===1?"":"s"}{shared>0&&<em> + {shared} shared</em>}</span></div><div className="subshell-list">{shellSubshells.map((subshell)=><div key={subshell.label}><i style={{background:subshellColors[subshell.kind]}}/><b>{subshell.label}</b><span>{subshell.count} electrons</span></div>)}</div></div>;})}</div></section>
             <AtomLearning atom={active} atoms={atoms} bonds={bonds}/>
             <section><h2>Why it changes</h2><p>{activeElement.note}</p>{active.charge !== 0 && <p className="change-note">This atom is shown as {active.charge > 0 ? `a ${active.charge}+ cation after losing outer electrons` : `a ${Math.abs(active.charge)}− anion after gaining electrons`}.</p>}</section>
-            <section><h2>Connected bonds</h2>{bondSummary.length ? <div className="bond-summary">{bondSummary.map((bond) => <div key={bond.id}><span><i className={bond.type} />{bond.type} bond</span><button type="button" aria-label={`Remove ${bond.type} bond`} onClick={() => { setBonds((items) => items.filter((item) => item.id !== bond.id)); setAtoms((items) => items.map((atom) => atom.id === bond.from || atom.id === bond.to ? { ...atom, charge: 0 } : atom)); }}><X /></button></div>)}</div> : <p>No bond. Move this atom close to a compatible atom.</p>}</section>
+            <section><h2>Connected bonds</h2>{bondSummary.length ? <div className="bond-summary">{bondSummary.map((bond) => <div key={bond.id}><span><i className={bond.type} />{bond.type} bond</span><button type="button" aria-label={`Remove ${bond.type} bond`} onClick={() => removeBond(bond.id)}><X /></button></div>)}</div> : <p>No bond. Move this atom close to a compatible atom.</p>}</section>
           </> : <div className="inspector-empty"><Atom /><b>Select an atom</b><span>Its configuration, subshells, charge, and bonds will appear here.</span></div>}
         </aside>
         <div className="sidebar-resizer right" role="separator" aria-label="Resize information sidebar" aria-orientation="vertical" aria-valuenow={sidebarWidths.right} onPointerDown={(event)=>{event.currentTarget.setPointerCapture(event.pointerId);resizing.current={side:"right",startX:event.clientX,startWidth:sidebarWidths.right};}} onPointerMove={(event)=>{const current=resizing.current;if(!current||current.side!=="right")return;setSidebarWidths((widths)=>({...widths,right:Math.max(220,Math.min(460,current.startWidth-event.clientX+current.startX))}));}} onPointerUp={()=>{resizing.current=null;}} onPointerCancel={()=>{resizing.current=null;}} onLostPointerCapture={()=>{resizing.current=null;}}/>
@@ -559,8 +624,7 @@ function BondInspector({bond,atoms,onClose,onRemove}:{bond:BondEdge;atoms:AtomNo
   const from=atoms.find((atom)=>atom.id===bond.from)!; const to=atoms.find((atom)=>atom.id===bond.to)!;
   const fromSubshell=subshellsForElectronCount(elements[from.element].z-from.charge+from.electronOffset).at(-1); const toSubshell=subshellsForElectronCount(elements[to.element].z-to.charge+to.electronOffset).at(-1);
   const fromEn=pauling(from.element),toEn=pauling(to.element),difference=Math.abs(fromEn-toEn),moreNegative=fromEn>toEn?from:to;
-  const metal = new Set(["Na","Fe","Li","K","Mg","Ca","Al"]);
-  const donor=metal.has(from.element)?from:to; const receiver=donor===from?to:from;
+  const donor=metals.has(from.element)?from:to; const receiver=donor===from?to:from;
   const polarity=bond.type==="ionic"?"ionic":difference<0.4?"mostly nonpolar":"polar covalent";
   return <div className="bond-inspector"><div className="inspector-title"><div><small>Selected bond</small><h1>{from.element} {bond.type === "ionic" ? "→" : "—"} {to.element}</h1><code>{bond.type} bond</code></div><button type="button" aria-label="Close bond details" onClick={onClose}><X /></button></div><section><h2>Electron behavior</h2>{bond.type === "ionic" ? <p><b>{donor.element}</b> donates an outer electron to <b>{receiver.element}</b>. They become oppositely charged ions held by electrostatic attraction.</p> : bond.type === "covalent" ? <><p><b>{from.element}</b> contributes {bond.order} electron{bond.order>1?"s":""} and <b>{to.element}</b> contributes {bond.order}. Together they share <b>{bond.order*2} electrons</b> in {bond.order === 1 ? "one pair" : `${bond.order} pairs`}.</p><div className="bond-contributors"><span><i style={{background:subshellColors[fromSubshell?.kind??"s"]}} />{from.element}: {fromSubshell?.label}</span><span><i style={{background:subshellColors[toSubshell?.kind??"s"]}} />{to.element}: {toSubshell?.label}</span></div><small className="sharing-note">The matching ring on each atom marks the electron used here. Every single bond contains one two-electron pair.</small></> : <p>Valence electrons are delocalized across the metal atoms rather than belonging to one pair.</p>}</section><section><h2>Bond polarity</h2><div className="polarity-scale"><span>{from.element}<small>{fromEn.toFixed(2)}</small></span><i style={{"--polarity":`${Math.min(100,difference/2*100)}%`} as React.CSSProperties}/><span>{to.element}<small>{toEn.toFixed(2)}</small></span></div><p>ΔEN = <b>{difference.toFixed(2)}</b>: this bond is {polarity}.{difference>=0.4&&bond.type==="covalent"&&<> Electron density is pulled toward <b>{moreNegative.element} δ−</b>; the other end is δ+.</>}</p></section><button type="button" className="remove-bond" onClick={onRemove}><Trash /> Remove bond</button></div>;
 }
@@ -592,12 +656,12 @@ function AtomLearning({atom,atoms,bonds}:{atom:AtomNode;atoms:AtomNode[];bonds:B
   const ionicOuterCount=ionicShells.filter((subshell)=>subshell.shell===outerShell).reduce((sum,subshell)=>sum+subshell.count,0);
   const shellCount=atom.charge!==0&&connected.some((bond)=>bond.type==="ionic")?ionicOuterCount:ownedValence+bondOrder;
   const exception=atom.element==="H"||atom.element==="He"?"First-shell duet rule":atom.element==="Be"||atom.element==="B"?"Stable electron-deficient structures are possible":shellCount>8&&elements[atom.element].subshells.some((item)=>item.shell>=3)?"Expanded valence shell is possible for some period-3-and-beyond compounds":unpaired?"An unpaired electron makes this a radical-like arrangement":null;
-  const stable=connected.length===0?{tone:"neutral",title:"Unbonded",text:"Move the atom near compatible partners to test a structure."}:shellCount===shellTarget||Boolean(exception)?{tone:"good",title:"Locally satisfied",text:atom.charge!==0?`After electron transfer, the ion’s outer occupied shell contains ${shellCount} electrons.`:`The displayed valence shell has ${shellCount} electrons when shared electrons are counted.`}:shellCount<shellTarget?{tone:"warn",title:"Incomplete valence shell",text:`This arrangement shows ${shellCount} of the usual ${shellTarget} valence-shell electrons.`}:{tone:"warn",title:"Check this structure",text:`The displayed shell has ${shellCount} electrons, above the usual ${shellTarget}.`};
   const componentIds=new Set<number>(),stack=[atom.id];
   while(stack.length){const id=stack.pop()!;if(componentIds.has(id))continue;componentIds.add(id);bonds.filter((bond)=>bond.from===id||bond.to===id).forEach((bond)=>stack.push(bond.from===id?bond.to:bond.from));}
   const counts=[...componentIds].map((id)=>atoms.find((item)=>item.id===id)!).reduce<Record<string,number>>((result,item)=>({...result,[item.element]:(result[item.element]??0)+1}),{});
   const signature=Object.keys(counts).sort().map((symbol)=>symbol+(counts[symbol]>1?counts[symbol]:"")).join("");
-  const resonance:Record<string,string>={O3:"Ozone is a resonance hybrid: the π bonding is delocalized, so its two O–O bonds are equivalent overall.",O2S:"Sulfur dioxide is described by resonance contributors; electron density is delocalized across both S–O bonds.",O3S:"Sulfur trioxide has three equivalent S–O bonds in its resonance description.",C6H6:"Benzene’s six π electrons are delocalized around the ring; alternating drawings are resonance contributors."};
+  const stable=signature==="LiO2"?{tone:"good",title:"RDKit-valid superoxide",text:"The O₂⁻ unit is a radical anion. Its −1 charge and odd electron are delocalized over both oxygen atoms."}:connected.length===0?{tone:"neutral",title:"Unbonded",text:"Move the atom near compatible partners to test a structure."}:shellCount===shellTarget||Boolean(exception)?{tone:"good",title:"Locally satisfied",text:atom.charge!==0?`After electron transfer, the ion’s outer occupied shell contains ${shellCount} electrons.`:`The displayed valence shell has ${shellCount} electrons when shared electrons are counted.`}:shellCount<shellTarget?{tone:"warn",title:"Incomplete valence shell",text:`This arrangement shows ${shellCount} of the usual ${shellTarget} valence-shell electrons.`}:{tone:"warn",title:"Check this structure",text:`The displayed shell has ${shellCount} electrons, above the usual ${shellTarget}.`};
+  const resonance:Record<string,string>={LiO2:"Lithium superoxide is Li⁺[O₂]⁻. Lithium transfers one electron total; the −1 charge and unpaired electron are delocalized across the O–O unit. A charge drawn on one oxygen is only one resonance bookkeeping form.",O3:"Ozone is a resonance hybrid: the π bonding is delocalized, so its two O–O bonds are equivalent overall.",O2S:"Sulfur dioxide is described by resonance contributors; electron density is delocalized across both S–O bonds.",O3S:"Sulfur trioxide has three equivalent S–O bonds in its resonance description.",C6H6:"Benzene’s six π electrons are delocalized around the ring; alternating drawings are resonance contributors."};
   const molecularDipoles:Record<string,string>={CO2:"The two equal C=O bond dipoles point in opposite directions and cancel, so CO₂ is nonpolar overall.",H2O:"The bent shape prevents the O–H bond dipoles from cancelling, so water has a net dipole.",CH4:"The tetrahedral C–H bond dipoles cancel by symmetry, so methane is nonpolar overall.",H3N:"The trigonal-pyramidal shape leaves ammonia with a net dipole toward nitrogen.",O2S:"The bent shape leaves sulfur dioxide with a net molecular dipole.",O3S:"The three S–O bond dipoles cancel in trigonal-planar SO₃."};
   const polarBonds=covalent.map((bond)=>{const partner=atoms.find((item)=>item.id===(bond.from===atom.id?bond.to:bond.from))!;const difference=Math.abs(pauling(atom.element)-pauling(partner.element));return {partner,difference,toward:pauling(atom.element)>pauling(partner.element)?atom.element:partner.element};}).filter((item)=>item.difference>=0.4);
   return <>

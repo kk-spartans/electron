@@ -3,10 +3,13 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
+    "prepare:rdkit": "node scripts/copy-rdkit.mjs",
+    "predev": "pnpm prepare:rdkit",
     "dev": "next dev",
+    "prebuild": "pnpm prepare:rdkit",
     "build": "next build",
     "start": "next start",
-    "lint": "oxlint .",
+    "lint": "oxlint . --ignore-pattern public/rdkit/**",
     "format": "oxfmt --write .",
     "format:check": "oxfmt --check ."
   },

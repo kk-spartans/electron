@@ -10,14 +10,14 @@ import {
 } from "@phosphor-icons/react";
 import AtomScene, { Subshell, subshellColors } from "@/components/AtomScene";
 import periodicTable from "@exabyte-io/periodic-table.js/periodic-table.json";
+import { loadRDKit, validateStructure } from "@/lib/rdkit";
+import { lookupStructure, type StructureCandidate, type StructureRecord } from "@/lib/pubchem";
 
 type ElementKey = string;
 type AtomNode = { id: number; element: ElementKey; x: number; y: number; charge: number; electronOffset: number };
 type BondType = "covalent" | "ionic" | "metallic";
 type BondEdge = { id: number; from: number; to: number; type: BondType; order: 1 | 2 | 3 };
 type FormulaGroup = { id: number; atomIds: number[]; formula: string; name?: string; source?: string; cid?: number };
-type StructureRecord = { cid?:number;name:string;formula:string;source:string;atoms:Array<{aid:number;atomicNumber:number;x:number;y:number}>;bonds:Array<{from:number;to:number;order:number}> };
-type StructureCandidate={cid:number;name:string;formula:string};
 
 type ElementData = {
   name: string; z: number; shells: number[]; config: string; valence: number;
@@ -148,6 +148,7 @@ export default function Home() {
   const [formulaGroups,setFormulaGroups]=useState<FormulaGroup[]>([]);
   const [selectedMolecule,setSelectedMolecule]=useState<number|null>(null);
   const [validationNotice,setValidationNotice]=useState("");
+  const [boot,setBoot]=useState({progress:0,ready:false,error:""});
   const nextId = useRef(3);
   const validationSequence=useRef(0);
   const formulaSpawnCount=useRef(0);
@@ -185,6 +186,13 @@ export default function Home() {
 
   useEffect(()=>{atomsRef.current=atoms;},[atoms]);
   useEffect(()=>{bondsRef.current=bonds;},[bonds]);
+  useEffect(()=>{
+    let active=true;
+    loadRDKit((progress)=>{if(active)setBoot({progress,ready:false,error:""});})
+      .then(()=>{if(active)setBoot({progress:1,ready:true,error:""});})
+      .catch((error)=>{if(active)setBoot({progress:0,ready:false,error:error instanceof Error?error.message:"The chemistry engine could not load."});});
+    return()=>{active=false;};
+  },[]);
 
   const namedCompounds = useMemo(() => {
     const adjacency = new Map<number, number[]>();
@@ -303,10 +311,9 @@ export default function Home() {
     setFormulaCandidates([]);
     setFormulaLoading(true);
     try{
-      const response=await fetch(`/api/structure?query=${encodeURIComponent(query)}`);
-      if(!response.ok){const failure=await response.json() as {error?:string;candidates?:StructureCandidate[]};setFormulaError(failure.error??"The structure could not be loaded.");setFormulaCandidates(failure.candidates??[]);return;}
-      const payload=await response.json() as StructureRecord&{error?:string};
-      if(payload.error){setFormulaError(payload.error);return;}
+      const result=await lookupStructure(query);
+      if(!result.record){setFormulaError(result.error??"The structure could not be loaded.");setFormulaCandidates(result.candidates??[]);return;}
+      const payload:StructureRecord=result.record;
       if(payload.atoms.length>120){setFormulaError(`This database structure contains ${payload.atoms.length} explicit atoms; the canvas limit is 120.`);return;}
       const spawnIndex=formulaSpawnCount.current++;
       const centerX=((canvasRef.current?.clientWidth??960)/2-pan.x)/scale+1650+(spawnIndex%3)*520,centerY=((canvasRef.current?.clientHeight??620)/2-pan.y)/scale+Math.floor(spawnIndex/3)*520;
@@ -413,9 +420,7 @@ export default function Home() {
       const charged=applyIonicCharges(currentAtoms,nextBonds);
       const sequence=++validationSequence.current;
       try{
-        const response=await fetch("/api/validate-structure",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({atoms:charged,bonds:nextBonds})});
-        if(!response.ok)throw new Error("RDKit validation request failed");
-        const result=await response.json() as {valid:boolean;reason?:string};
+        const result=await validateStructure(charged,nextBonds);
         if(sequence!==validationSequence.current)return false;
         if(!result.valid){
           setValidationNotice(result.reason??"RDKit rejected that bonding arrangement.");
@@ -496,6 +501,15 @@ export default function Home() {
   }
 
   return (
+    <>
+      {!boot.ready&&<div className="boot-screen" role="status" aria-live="polite">
+        <div className="boot-mark"><Atom weight="bold"/><b>Electron</b></div>
+        <div className="boot-copy">
+          <strong>{boot.error?"Chemistry engine unavailable":"Preparing the chemistry engine"}</strong>
+          <span>{boot.error?"Check the site files and reload.":"Downloading RDKit for local structure validation…"}</span>
+        </div>
+        {!boot.error?<><div className="boot-progress" aria-label="Chemistry engine download progress" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(boot.progress*100)} role="progressbar"><i style={{transform:`scaleX(${boot.progress})`}}/></div><output>{Math.round(boot.progress*100)}%</output></>:<button type="button" onClick={()=>window.location.reload()}>Reload</button>}
+      </div>}
     <main className="lab-shell">
       <div className="lab-layout" style={{"--left-width":`${sidebarWidths.left}px`,"--right-width":`${sidebarWidths.right}px`} as React.CSSProperties}>
         <aside className="element-tray">
@@ -596,6 +610,7 @@ export default function Home() {
       {periodicOpen&&<div className="periodic-backdrop" onPointerDown={()=>setPeriodicOpen(false)}><section className="periodic-panel" role="dialog" aria-modal="true" aria-label="Periodic table" onPointerDown={(event)=>event.stopPropagation()}><header><div><small>Element library</small><h1>Periodic table</h1></div><div className="periodic-filters"><label>Valence<select value={valenceFilter} onChange={(event)=>setValenceFilter(event.target.value)}><option value="all">All</option>{Array.from({length:8},(_,index)=><option key={index+1} value={index+1}>{index+1} electron{index===0?"":"s"}</option>)}</select></label><label>Character<select value={characterFilter} onChange={(event)=>setCharacterFilter(event.target.value)}><option value="all">All</option><option value="electronegative">Electronegative</option><option value="intermediate">Intermediate</option><option value="electropositive">Electropositive</option></select></label></div><button type="button" aria-label="Close periodic table" onClick={()=>setPeriodicOpen(false)}><X/></button></header><div className="periodic-grid">{periodicMain.flatMap((row,rowIndex)=>row.map(([symbol,column])=>{const item=elements[symbol],matches=periodicMatch(symbol);return <button type="button" key={symbol} className={matches?"":"filtered"} disabled={!matches} draggable={matches} style={{gridColumn:column,gridRow:rowIndex+1}} onDragStart={(event)=>{event.dataTransfer.setData("element",symbol);event.dataTransfer.effectAllowed="copy";}} onDragEnd={(event)=>dropPeriodicAtom(event,symbol)} onClick={()=>{addAtom(symbol);setPeriodicOpen(false);}}><small>{item.z}</small><b>{symbol}</b><span>{item.name}</span><i>{item.valence}v · {pauling(symbol)||"—"} EN</i></button>}))}{periodicFBlock.flatMap((row,rowIndex)=>row.map((symbol,index)=>{const item=elements[symbol],matches=periodicMatch(symbol);return <button type="button" key={symbol} className={matches?"f-block":"f-block filtered"} disabled={!matches} draggable={matches} style={{gridColumn:index+4,gridRow:rowIndex+8}} onDragStart={(event)=>event.dataTransfer.setData("element",symbol)} onDragEnd={(event)=>dropPeriodicAtom(event,symbol)} onClick={()=>{addAtom(symbol);setPeriodicOpen(false);}}><small>{item.z}</small><b>{symbol}</b><span>{item.name}</span><i>{item.valence}v · {pauling(symbol)||"—"} EN</i></button>}))}</div></section></div>}
       {formulaOpen&&<div className="formula-command-backdrop" onPointerDown={()=>{if(!formulaLoading)setFormulaOpen(false);}}><form className={`formula-command ${formulaCandidates.length?"has-results":""}`} role="dialog" aria-modal="true" aria-label="Add a PubChem structure" onPointerDown={(event)=>event.stopPropagation()} onSubmit={(event)=>{event.preventDefault();spawnFormula(formulaInput);}}><label><span>Structure lookup</span><input autoFocus value={formulaInput} onChange={(event)=>{setFormulaInput(event.target.value);setFormulaError("");setFormulaCandidates([]);}} spellCheck={false} autoComplete="off" placeholder="Formula, name, CID, or smiles:…"/></label><small>Accepts formulas, compound names, PubChem CIDs, and SMILES prefixed with “smiles:”.</small>{formulaError&&<p role="status">{formulaError}</p>}<button type="submit" disabled={formulaLoading}>{formulaLoading?"Loading…":"Search"}</button>{formulaCandidates.length>0&&<div className="structure-candidates" aria-label="Matching PubChem structures"><header><b>Select a structure</b><span>Showing the first {formulaCandidates.length} PubChem matches</span></header>{formulaCandidates.map((candidate)=><button type="button" key={candidate.cid} onClick={()=>spawnFormula(String(candidate.cid))} disabled={formulaLoading}><span><b>{candidate.name}</b><small>{candidate.formula.replace(/\d/g,(digit)=>"₀₁₂₃₄₅₆₇₈₉"[Number(digit)])}</small></span><code>CID {candidate.cid}</code></button>)}</div>}</form></div>}
     </main>
+    </>
   );
 }
 

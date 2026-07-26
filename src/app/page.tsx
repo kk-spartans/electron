@@ -374,13 +374,19 @@ export default function Home() {
   const [formulaError, setFormulaError] = useState("");
   const [formulaLoading, setFormulaLoading] = useState(false);
   const [formulaCandidates, setFormulaCandidates] = useState<StructureCandidate[]>([]);
-  const [sidebarWidths, setSidebarWidths] = useState({ left: 196, right: 292 });
+  const [sidebarWidths, setSidebarWidths] = useState({ left: 228, right: 336 });
   const [periodicOpen, setPeriodicOpen] = useState(false);
   const [valenceFilter, setValenceFilter] = useState("all");
   const [characterFilter, setCharacterFilter] = useState("all");
   const [formulaGroups, setFormulaGroups] = useState<FormulaGroup[]>([]);
   const [selectedMolecule, setSelectedMolecule] = useState<number | null>(null);
   const [validationNotice, setValidationNotice] = useState("");
+  const [selectionBox, setSelectionBox] = useState<{
+    startX: number;
+    startY: number;
+    endX: number;
+    endY: number;
+  } | null>(null);
   const [boot, setBoot] = useState({ progress: 0, ready: false, error: "" });
   const nextId = useRef(3);
   const validationSequence = useRef(0);
@@ -391,6 +397,14 @@ export default function Home() {
   const geometryAnimation = useRef<number | null>(null);
   const gesture = useRef<
     | { type: "pan" | "atom"; id?: number; sx: number; sy: number; ox: number; oy: number }
+    | {
+        type: "marquee";
+        sx: number;
+        sy: number;
+        ox: number;
+        oy: number;
+        additive: boolean;
+      }
     | {
         type: "molecule";
         groupId: number;
@@ -560,6 +574,7 @@ export default function Home() {
         {
           positive: sorted[0],
           negative: sorted.at(-1)!,
+          members,
           x: members.reduce((sum, atom) => sum + atom.x, 0) / members.length,
           y: members.reduce((sum, atom) => sum + atom.y, 0) / members.length,
         },
@@ -570,14 +585,44 @@ export default function Home() {
         const centerDistance = Math.hypot(first.x - second.x, first.y - second.y);
         if (centerDistance > 900) return [];
         const options = [
-          { from: first.positive, to: second.negative },
-          { from: second.positive, to: first.negative },
-        ].sort(
-          (a, b) =>
-            Math.hypot(a.from.x - a.to.x, a.from.y - a.to.y) -
-            Math.hypot(b.from.x - b.to.x, b.from.y - b.to.y),
-        );
-        return [{ id: `${index}-${index + offset + 1}`, ...options[0] }];
+          {
+            from: first,
+            to: second,
+            polarityDistance: Math.hypot(
+              first.positive.x - second.negative.x,
+              first.positive.y - second.negative.y,
+            ),
+          },
+          {
+            from: second,
+            to: first,
+            polarityDistance: Math.hypot(
+              second.positive.x - first.negative.x,
+              second.positive.y - first.negative.y,
+            ),
+          },
+        ].sort((a, b) => a.polarityDistance - b.polarityDistance);
+        const { from, to } = options[0];
+        const distance = Math.hypot(to.x - from.x, to.y - from.y);
+        if (!distance) return [];
+        const dx = (to.x - from.x) / distance,
+          dy = (to.y - from.y) / distance,
+          atomRadius = 86,
+          fromExtent =
+            Math.max(
+              ...from.members.map((atom) => (atom.x - from.x) * dx + (atom.y - from.y) * dy),
+            ) + atomRadius,
+          toExtent =
+            Math.max(...to.members.map((atom) => (to.x - atom.x) * dx + (to.y - atom.y) * dy)) +
+            atomRadius;
+        if (fromExtent + toExtent >= distance) return [];
+        return [
+          {
+            id: `${index}-${index + offset + 1}`,
+            from: { x: from.x + dx * fromExtent, y: from.y + dy * fromExtent },
+            to: { x: to.x - dx * toExtent, y: to.y - dy * toExtent },
+          },
+        ];
       }),
     );
   }, [atoms, bonds]);
@@ -587,6 +632,13 @@ export default function Home() {
     if (!canvas) return;
     const handleWheel = (event: WheelEvent) => {
       event.preventDefault();
+      if (!event.ctrlKey) {
+        setPan((current) => ({
+          x: current.x - event.deltaX,
+          y: current.y - event.deltaY,
+        }));
+        return;
+      }
       const box = canvas.getBoundingClientRect(),
         pointerX = event.clientX - box.left,
         pointerY = event.clientY - box.top;
@@ -1113,6 +1165,13 @@ export default function Home() {
     const dx = event.clientX - current.sx;
     const dy = event.clientY - current.sy;
     if (current.type === "pan") setPan({ x: current.ox + dx, y: current.oy + dy });
+    else if (current.type === "marquee")
+      setSelectionBox({
+        startX: current.sx,
+        startY: current.sy,
+        endX: event.clientX,
+        endY: event.clientY,
+      });
     else if (current.type === "molecule") {
       const origins = current.origins;
       setAtoms((items) =>
@@ -1185,17 +1244,6 @@ export default function Home() {
             </div>
             <button type="button" className="open-periodic" onClick={() => setPeriodicOpen(true)}>
               <Atom /> Periodic table
-            </button>
-            <button
-              type="button"
-              className="open-periodic structure-lookup"
-              onClick={() => {
-                setFormulaOpen(true);
-                setFormulaError("");
-                setFormulaCandidates([]);
-              }}
-            >
-              <MagnifyingGlass /> Add molecule
             </button>
             <div className="tray-heading">
               <b>Add atoms</b>
@@ -1289,27 +1337,80 @@ export default function Home() {
                 )
               ) {
                 event.currentTarget.setPointerCapture(event.pointerId);
-                gesture.current = {
-                  type: "pan",
-                  sx: event.clientX,
-                  sy: event.clientY,
-                  ox: pan.x,
-                  oy: pan.y,
-                };
+                if (event.button === 1) {
+                  event.preventDefault();
+                  gesture.current = {
+                    type: "pan",
+                    sx: event.clientX,
+                    sy: event.clientY,
+                    ox: pan.x,
+                    oy: pan.y,
+                  };
+                } else if (event.button === 0) {
+                  gesture.current = {
+                    type: "marquee",
+                    sx: event.clientX,
+                    sy: event.clientY,
+                    ox: pan.x,
+                    oy: pan.y,
+                    additive: event.shiftKey,
+                  };
+                  setSelectionBox({
+                    startX: event.clientX,
+                    startY: event.clientY,
+                    endX: event.clientX,
+                    endY: event.clientY,
+                  });
+                }
               }
             }}
             onPointerMove={pointerMove}
-            onPointerUp={() => {
+            onPointerUp={(event) => {
+              const current = gesture.current;
+              if (current?.type === "marquee") {
+                const box = event.currentTarget.getBoundingClientRect(),
+                  minX = Math.min(current.sx, event.clientX) - box.left,
+                  maxX = Math.max(current.sx, event.clientX) - box.left,
+                  minY = Math.min(current.sy, event.clientY) - box.top,
+                  maxY = Math.max(current.sy, event.clientY) - box.top,
+                  matches = atoms
+                    .filter((atom) => {
+                      const x = pan.x + atom.x * scale,
+                        y = pan.y + atom.y * scale;
+                      return x >= minX && x <= maxX && y >= minY && y <= maxY;
+                    })
+                    .map((atom) => atom.id);
+                setSelected((existing) =>
+                  current.additive ? [...new Set([...existing, ...matches])] : matches,
+                );
+                setSelectedBond(null);
+                setSelectedMolecule(null);
+                setSelectedElectron(null);
+              }
               gesture.current = null;
+              setSelectionBox(null);
             }}
             onPointerCancel={() => {
               gesture.current = null;
+              setSelectionBox(null);
             }}
             onLostPointerCapture={() => {
               gesture.current = null;
+              setSelectionBox(null);
             }}
           >
             <div className="bond-toolbar">
+              <button
+                type="button"
+                className="structure-lookup"
+                onClick={() => {
+                  setFormulaOpen(true);
+                  setFormulaError("");
+                  setFormulaCandidates([]);
+                }}
+              >
+                <MagnifyingGlass /> Add molecule
+              </button>
               <span>
                 <Atom /> Ringed atom electrons appear in shared pairs
               </span>
@@ -1317,6 +1418,21 @@ export default function Home() {
                 {Math.round(scale * 100)}%
               </output>
             </div>
+            {selectionBox && (
+              <div
+                className="selection-marquee"
+                style={{
+                  left:
+                    Math.min(selectionBox.startX, selectionBox.endX) -
+                    (canvasRef.current?.getBoundingClientRect().left ?? 0),
+                  top:
+                    Math.min(selectionBox.startY, selectionBox.endY) -
+                    (canvasRef.current?.getBoundingClientRect().top ?? 0),
+                  width: Math.abs(selectionBox.endX - selectionBox.startX),
+                  height: Math.abs(selectionBox.endY - selectionBox.startY),
+                }}
+              />
+            )}
             {validationNotice && <output className="validation-notice">{validationNotice}</output>}
             <div className="canvas-world">
               <svg className="bond-layer" width="1600" height="1000">
@@ -2106,10 +2222,6 @@ export default function Home() {
               aria-modal="true"
               aria-label="Add a PubChem structure"
               onPointerDown={(event) => event.stopPropagation()}
-              onSubmit={(event) => {
-                event.preventDefault();
-                void spawnFormula(formulaInput);
-              }}
             >
               <form
                 onSubmit={(event) => {
@@ -2254,10 +2366,6 @@ function MoleculeInspector({
             {ionic.length} ionic interaction{ionic.length === 1 ? " is" : "s are"} shown.
           </p>
         )}
-        <p className="structure-note">
-          Connectivity, bond orders, and drawing coordinates are loaded from{" "}
-          {group.source ?? "the structure database"}; they are not inferred from the formula.
-        </p>
       </section>
       <section>
         <h2>Canvas interaction</h2>

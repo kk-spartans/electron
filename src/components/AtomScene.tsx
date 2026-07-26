@@ -3,10 +3,10 @@
 export type Subshell = { label: string; count: number; shell: number; kind: "s" | "p" | "d" | "f" };
 
 const subshellColors = {
-  s: "#c7ff5c",
-  p: "#62d9ff",
-  d: "#ff826b",
-  f: "#c994ff",
+  s: "#cba6f7",
+  p: "#89b4fa",
+  d: "#fab387",
+  f: "#b4befe",
 };
 
 export { subshellColors };

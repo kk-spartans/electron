@@ -560,8 +560,17 @@ button {
   border: 1px solid var(--line);
   border-radius: 8px;
   background: #11111be8;
-  pointer-events: none;
+  color: inherit;
+  font: inherit;
+  text-align: center;
+  cursor: pointer;
   box-shadow: 0 8px 24px #0005;
+}
+.compound-label:hover,
+.compound-label:focus-visible {
+  border-color: var(--accent);
+  background: #181825;
+  outline: none;
 }
 .compound-label b {
   color: var(--accent);
@@ -578,30 +587,6 @@ button {
 .compound-label.imported b {
   overflow-wrap: anywhere;
   text-align: center;
-}
-.molecule-region {
-  position: absolute;
-  z-index: 1;
-  border: 1px dashed transparent;
-  border-radius: 28px;
-  background: #cba6f705;
-  cursor: move;
-  outline: none;
-}
-.molecule-region:hover {
-  border-color: #cba6f766;
-  background: #cba6f709;
-}
-.molecule-region.selected {
-  border-color: #cba6f7aa;
-  background: #cba6f70d;
-  box-shadow: inset 0 0 0 1px #cba6f716;
-}
-.molecule-region:focus-visible {
-  border-color: var(--accent);
-  box-shadow:
-    0 0 0 2px #000,
-    0 0 0 4px var(--accent);
 }
 .canvas-atom {
   position: absolute;
@@ -1276,15 +1261,22 @@ button {
   background: #000b;
 }
 .formula-command {
+  position: absolute;
+  inset: auto;
+  top: 50%;
+  left: 50%;
   width: min(520px, calc(100vw - 28px));
-  display: grid;
-  grid-template-columns: 1fr auto;
-  gap: 8px;
+  margin: 0;
+  transform: translate(-50%, -56%);
   padding: 12px;
   border: 1px solid #45475a;
   border-radius: 10px;
   background: #11111b;
   box-shadow: 0 24px 70px #000b;
+}
+.formula-command form {
+  display: grid;
+  gap: 8px;
 }
 .formula-command label {
   display: grid;
@@ -1312,31 +1304,16 @@ button {
 .formula-command input:focus {
   border-color: var(--accent);
 }
-.formula-command button {
-  border: 1px solid #cba6f7;
-  border-radius: 7px;
-  padding: 0 12px;
-  background: #2a2139;
-  color: var(--accent);
-  font-size: 11px;
-  cursor: pointer;
-}
-.formula-command button:disabled {
-  opacity: 0.55;
+.formula-command input:disabled {
+  color: #fff;
+  opacity: 0.8;
   cursor: wait;
 }
-.formula-command > small,
-.formula-command p {
-  grid-column: 1/-1;
+.formula-command output {
   margin: 0;
-  font-size: 11px;
-}
-.formula-command > small {
-  color: var(--muted);
-  line-height: 1.45;
-}
-.formula-command p {
   color: #f38ba8;
+  font-size: 11px;
+  line-height: 1.45;
 }
 .formula-command.has-results {
   width: min(660px, calc(100vw - 28px));
@@ -1378,10 +1355,17 @@ button {
   justify-content: space-between;
   gap: 12px;
   padding: 7px 10px;
-  border-color: #313244;
+  border: 1px solid #313244;
+  border-radius: 7px;
   background: #181825;
   color: var(--text);
+  font-size: 11px;
   text-align: left;
+  cursor: pointer;
+}
+.formula-command .structure-candidates > button:disabled {
+  opacity: 0.55;
+  cursor: wait;
 }
 .formula-command .structure-candidates > button:hover:not(:disabled),
 .formula-command .structure-candidates > button:focus-visible {

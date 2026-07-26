@@ -396,7 +396,7 @@ export default function Home() {
   const bondsRef = useRef(bonds);
   const geometryAnimation = useRef<number | null>(null);
   const gesture = useRef<
-    | { type: "pan" | "atom"; id?: number; sx: number; sy: number; ox: number; oy: number }
+    | { type: "pan"; sx: number; sy: number; ox: number; oy: number }
     | {
         type: "marquee";
         sx: number;
@@ -406,8 +406,7 @@ export default function Home() {
         additive: boolean;
       }
     | {
-        type: "molecule";
-        groupId: number;
+        type: "selection";
         sx: number;
         sy: number;
         origins: Map<number, { x: number; y: number }>;
@@ -524,6 +523,7 @@ export default function Home() {
       return [
         {
           ...known,
+          atomIds: ids,
           x: members.reduce((sum, atom) => sum + atom.x, 0) / members.length,
           y: Math.max(...members.map((atom) => atom.y)) + 125,
         },
@@ -632,13 +632,6 @@ export default function Home() {
     if (!canvas) return;
     const handleWheel = (event: WheelEvent) => {
       event.preventDefault();
-      if (!event.ctrlKey) {
-        setPan((current) => ({
-          x: current.x - event.deltaX,
-          y: current.y - event.deltaY,
-        }));
-        return;
-      }
       const box = canvas.getBoundingClientRect(),
         pointerX = event.clientX - box.left,
         pointerY = event.clientY - box.top;
@@ -1172,7 +1165,7 @@ export default function Home() {
         endX: event.clientX,
         endY: event.clientY,
       });
-    else if (current.type === "molecule") {
+    else if (current.type === "selection") {
       const origins = current.origins;
       setAtoms((items) =>
         items.map((atom) => {
@@ -1180,14 +1173,7 @@ export default function Home() {
           return origin ? { ...atom, x: origin.x + dx / scale, y: origin.y + dy / scale } : atom;
         }),
       );
-    } else
-      setAtoms((items) =>
-        items.map((atom) =>
-          atom.id === current.id
-            ? { ...atom, x: current.ox + dx / scale, y: current.oy + dy / scale }
-            : atom,
-        ),
-      );
+    }
   }
 
   return (
@@ -1318,6 +1304,23 @@ export default function Home() {
             ref={canvasRef}
             className="chem-canvas"
             aria-label="Interactive atom canvas"
+            onPointerDownCapture={(event) => {
+              if (
+                event.button !== 1 ||
+                (event.target as Element).closest(".bond-toolbar, .canvas-atom-controls")
+              )
+                return;
+              event.preventDefault();
+              event.stopPropagation();
+              event.currentTarget.setPointerCapture(event.pointerId);
+              gesture.current = {
+                type: "pan",
+                sx: event.clientX,
+                sy: event.clientY,
+                ox: pan.x,
+                oy: pan.y,
+              };
+            }}
             onDragOver={(event) => event.preventDefault()}
             onDrop={(event) => {
               const symbol = event.dataTransfer.getData("element") as ElementKey;
@@ -1333,7 +1336,7 @@ export default function Home() {
               const target = event.target as Element;
               if (
                 !target.closest(
-                  ".canvas-atom, .canvas-atom-controls, .bond-toolbar, .bond-target, .molecule-region",
+                  ".canvas-atom, .canvas-atom-controls, .bond-toolbar, .bond-target, .compound-label",
                 )
               ) {
                 event.currentTarget.setPointerCapture(event.pointerId);
@@ -1553,71 +1556,6 @@ export default function Home() {
                     );
                   })}
               </svg>
-              {formulaGroups.flatMap((group) => {
-                const members = group.atomIds
-                  .map((id) => atoms.find((atom) => atom.id === id))
-                  .filter((atom): atom is AtomNode => Boolean(atom));
-                if (members.length !== group.atomIds.length || !members.length) return [];
-                const padding = 115,
-                  minX = Math.min(...members.map((atom) => atom.x)) - padding,
-                  maxX = Math.max(...members.map((atom) => atom.x)) + padding,
-                  minY = Math.min(...members.map((atom) => atom.y)) - padding,
-                  maxY = Math.max(...members.map((atom) => atom.y)) + padding;
-                return (
-                  <button
-                    type="button"
-                    aria-label={`Select ${group.name ?? group.formula} molecule`}
-                    className={`molecule-region ${selectedMolecule === group.id ? "selected" : ""}`}
-                    key={`region-${group.id}`}
-                    style={{
-                      width: (maxX - minX) * scale,
-                      height: (maxY - minY) * scale,
-                      transform: `translate(${pan.x + minX * scale}px,${pan.y + minY * scale}px)`,
-                    }}
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      setSelectedMolecule(group.id);
-                      setSelected([]);
-                      setSelectedBond(null);
-                      setSelectedElectron(null);
-                    }}
-                    onKeyDown={(event) => {
-                      if (event.key === "Enter" || event.key === " ") {
-                        event.preventDefault();
-                        setSelectedMolecule(group.id);
-                        setSelected([]);
-                        setSelectedBond(null);
-                      }
-                    }}
-                    onPointerDown={(event) => {
-                      event.stopPropagation();
-                      event.currentTarget.setPointerCapture(event.pointerId);
-                      setSelectedMolecule(group.id);
-                      setSelected([]);
-                      setSelectedBond(null);
-                      gesture.current = {
-                        type: "molecule",
-                        groupId: group.id,
-                        sx: event.clientX,
-                        sy: event.clientY,
-                        origins: new Map(
-                          members.map((atom) => [atom.id, { x: atom.x, y: atom.y }]),
-                        ),
-                      };
-                    }}
-                    onPointerMove={pointerMove}
-                    onPointerUp={() => {
-                      gesture.current = null;
-                    }}
-                    onPointerCancel={() => {
-                      gesture.current = null;
-                    }}
-                    onLostPointerCapture={() => {
-                      gesture.current = null;
-                    }}
-                  />
-                );
-              })}
               {bonds.map((bond) => {
                 const from = atoms.find((atom) => atom.id === bond.from),
                   to = atoms.find((atom) => atom.id === bond.to);
@@ -1643,16 +1581,33 @@ export default function Home() {
                 );
               })}
               {namedCompounds.map((compound) => (
-                <div
+                <button
+                  type="button"
                   className="compound-label"
                   key={`${compound.formula}-${compound.x}-${compound.y}`}
                   style={{
                     transform: `translate(${pan.x + compound.x * scale}px, ${pan.y + compound.y * scale}px)`,
                   }}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    const group = formulaGroups.find(
+                      (candidate) =>
+                        candidate.atomIds.length === compound.atomIds.length &&
+                        candidate.atomIds.every((id) => compound.atomIds.includes(id)),
+                    );
+                    setSelected((current) =>
+                      event.shiftKey
+                        ? [...new Set([...current, ...compound.atomIds])]
+                        : compound.atomIds,
+                    );
+                    setSelectedMolecule(group?.id ?? null);
+                    setSelectedBond(null);
+                    setSelectedElectron(null);
+                  }}
                 >
                   <b>{compound.formula}</b>
                   <span>{compound.name}</span>
-                </div>
+                </button>
               ))}
               {formulaGroups
                 .filter(
@@ -1667,16 +1622,28 @@ export default function Home() {
                   const x = members.reduce((sum, atom) => sum + atom.x, 0) / members.length,
                     y = Math.max(...members.map((atom) => atom.y)) + 125;
                   return (
-                    <div
+                    <button
+                      type="button"
                       className="compound-label imported"
                       key={group.id}
                       style={{
                         transform: `translate(${pan.x + x * scale}px,${pan.y + y * scale}px)`,
                       }}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        setSelected((current) =>
+                          event.shiftKey
+                            ? [...new Set([...current, ...group.atomIds])]
+                            : group.atomIds,
+                        );
+                        setSelectedMolecule(group.id);
+                        setSelectedBond(null);
+                        setSelectedElectron(null);
+                      }}
                     >
                       <b>{group.formula}</b>
                       <span>{group.name ?? group.source ?? "database structure"}</span>
-                    </div>
+                    </button>
                   );
                 })}
               {atoms.map((atom) => {
@@ -1719,11 +1686,6 @@ export default function Home() {
                       transform: `translate(${pan.x + atom.x * scale - atomSize / 2}px, ${pan.y + atom.y * scale - atomSize / 2}px)`,
                     }}
                     key={atom.id}
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      if (!(event.target as Element).closest(".diagram-electron"))
-                        selectAtom(atom.id, event.shiftKey);
-                    }}
                     onKeyDown={(event) => {
                       if (event.key === "Enter" || event.key === " ") {
                         event.preventDefault();
@@ -1734,24 +1696,36 @@ export default function Home() {
                       event.stopPropagation();
                       if ((event.target as Element).closest(".diagram-electron")) return;
                       event.currentTarget.setPointerCapture(event.pointerId);
+                      const moveIds = isSelected
+                        ? selected
+                        : event.shiftKey
+                          ? [...selected, atom.id]
+                          : [atom.id];
+                      const moveSet = new Set(moveIds);
+                      setSelected(moveIds);
+                      setSelectedMolecule(null);
+                      setSelectedBond(null);
                       gesture.current = {
-                        type: "atom",
-                        id: atom.id,
+                        type: "selection",
                         sx: event.clientX,
                         sy: event.clientY,
-                        ox: atom.x,
-                        oy: atom.y,
+                        origins: new Map(
+                          atoms
+                            .filter((item) => moveSet.has(item.id))
+                            .map((item) => [item.id, { x: item.x, y: item.y }]),
+                        ),
                       };
                     }}
                     onPointerMove={pointerMove}
                     onPointerUp={() => {
                       const current = gesture.current;
-                      const movedId = current?.type === "atom" ? current.id : undefined;
+                      const movedIds =
+                        current?.type === "selection" ? [...current.origins.keys()] : [];
                       gesture.current = null;
-                      if (movedId)
-                        void settleAtom(movedId)
+                      if (movedIds.length === 1)
+                        void settleAtom(movedIds[0])
                           .then((valid) => {
-                            if (valid) relaxBondGeometry(movedId);
+                            if (valid) relaxBondGeometry(movedIds[0]);
                           })
                           .catch(() => setValidationNotice("RDKit validation failed."));
                     }}
@@ -2224,6 +2198,7 @@ export default function Home() {
               onPointerDown={(event) => event.stopPropagation()}
             >
               <form
+                aria-busy={formulaLoading}
                 onSubmit={(event) => {
                   event.preventDefault();
                   void spawnFormula(formulaInput);
@@ -2241,17 +2216,11 @@ export default function Home() {
                     }}
                     spellCheck={false}
                     autoComplete="off"
+                    disabled={formulaLoading}
                     placeholder="Formula, name, CID, or smiles:…"
                   />
                 </label>
-                <small>
-                  Accepts formulas, compound names, PubChem CIDs, and SMILES prefixed with
-                  “smiles:”.
-                </small>
                 {formulaError && <output>{formulaError}</output>}
-                <button type="submit" disabled={formulaLoading}>
-                  {formulaLoading ? "Loading…" : "Search"}
-                </button>
                 {formulaCandidates.length > 0 && (
                   <div className="structure-candidates" aria-label="Matching PubChem structures">
                     <header>

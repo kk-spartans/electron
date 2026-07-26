@@ -231,7 +231,11 @@ function applyIonicCharges(atomList: AtomNode[], bondList: BondEdge[]) {
   return atomList.map((atom) => ({ ...atom, charge: charges.get(atom.id) ?? 0 }));
 }
 
+const electronSubshellCache = new Map<number, Subshell[]>();
+
 function subshellsForElectronCount(count: number) {
+  const cached = electronSubshellCache.get(count);
+  if (cached) return cached;
   let remaining = Math.max(0, count);
   const result: Subshell[] = [];
   for (const [label, shell, capacity, kind] of filling) {
@@ -240,13 +244,9 @@ function subshellsForElectronCount(count: number) {
     result.push({ label, shell, count: occupied, kind });
     remaining -= occupied;
   }
+  electronSubshellCache.set(count, result);
   return result;
 }
-
-const initialAtoms: AtomNode[] = [
-  { id: 1, element: "Na", x: 220, y: 310, charge: 1, electronOffset: 0 },
-  { id: 2, element: "Cl", x: 490, y: 310, charge: -1, electronOffset: 0 },
-];
 
 const compoundNames: Record<string, { formula: string; name: string; bondUnits: number }> = {
   ClNa: { formula: "NaCl", name: "sodium chloride", bondUnits: 1 },
@@ -353,11 +353,9 @@ const periodicFBlock = [
 ];
 
 export default function Home() {
-  const [atoms, setAtoms] = useState<AtomNode[]>(initialAtoms);
-  const [bonds, setBonds] = useState<BondEdge[]>([
-    { id: 1, from: 1, to: 2, type: "ionic", order: 1 },
-  ]);
-  const [selected, setSelected] = useState<number[]>([1]);
+  const [atoms, setAtoms] = useState<AtomNode[]>([]);
+  const [bonds, setBonds] = useState<BondEdge[]>([]);
+  const [selected, setSelected] = useState<number[]>([]);
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [scale, setScale] = useState(1);
   const [elementQuery, setElementQuery] = useState("");
@@ -388,7 +386,9 @@ export default function Home() {
     endY: number;
   } | null>(null);
   const [boot, setBoot] = useState({ progress: 0, ready: false, error: "" });
-  const nextId = useRef(3);
+  const nextId = useRef(1);
+  const defaultCompoundLoaded = useRef(false);
+  const spawnFormulaRef = useRef<(formula: string) => Promise<void>>(async () => {});
   const validationSequence = useRef(0);
   const formulaSpawnCount = useRef(0);
   const canvasRef = useRef<HTMLElement>(null);
@@ -416,20 +416,64 @@ export default function Home() {
   const resizing = useRef<{ side: "left" | "right"; startX: number; startWidth: number } | null>(
     null,
   );
-  const active = atoms.find((atom) => atom.id === selected[selected.length - 1]);
+  const atomById = useMemo(() => new Map(atoms.map((atom) => [atom.id, atom])), [atoms]);
+  const active = atomById.get(selected[selected.length - 1]);
   const activeElement = active ? elements[active.element] : null;
   const activeSubshells =
     active && activeElement
       ? subshellsForElectronCount(activeElement.z - active.charge + active.electronOffset)
       : [];
   const activeBond = bonds.find((bond) => bond.id === selectedBond);
-  const activeMolecule = formulaGroups.find((group) => group.id === selectedMolecule);
   const selectedAtomIds = new Set(selected);
   const visibleElements = allSymbols.filter(
     (symbol) =>
       symbol.toLowerCase().includes(elementQuery.toLowerCase()) ||
       elements[symbol].name.toLowerCase().includes(elementQuery.toLowerCase()),
   );
+  const atomBondVisuals = useMemo(() => {
+    const visuals = new Map<
+      number,
+      {
+        sharedElectrons: number;
+        sharedFrom: Array<{ color: string; label: string; subshell: string }>;
+      }
+    >();
+    const visualFor = (
+      id: number,
+    ): {
+      sharedElectrons: number;
+      sharedFrom: Array<{ color: string; label: string; subshell: string }>;
+    } => {
+      const existing = visuals.get(id);
+      if (existing) return existing;
+      const created = { sharedElectrons: 0, sharedFrom: [] };
+      visuals.set(id, created);
+      return created;
+    };
+
+    bonds.forEach((bond) => {
+      if (bond.type !== "covalent") return;
+      const from = atomById.get(bond.from),
+        to = atomById.get(bond.to);
+      if (!from || !to) return;
+      const addShared = (atom: AtomNode, partner: AtomNode) => {
+        const visual = visualFor(atom.id);
+        visual.sharedElectrons += bond.order;
+        const subshell = subshellsForElectronCount(
+          elements[partner.element].z - partner.charge + partner.electronOffset,
+        ).at(-1);
+        for (let index = 0; index < bond.order; index++)
+          visual.sharedFrom.push({
+            color: subshellColors[subshell?.kind ?? "s"],
+            label: partner.element,
+            subshell: subshell?.label ?? "unknown",
+          });
+      };
+      addShared(from, to);
+      addShared(to, from);
+    });
+    return visuals;
+  }, [atomById, bonds]);
 
   const bondSummary = useMemo(() => {
     if (!active) return [];
@@ -442,7 +486,7 @@ export default function Home() {
       .flatMap((bond) =>
         bond.from === active.id ? [bond.to] : bond.to === active.id ? [bond.from] : [],
       )
-      .map((id) => atoms.find((atom) => atom.id === id))
+      .map((id) => atomById.get(id))
       .filter((atom): atom is AtomNode => Boolean(atom));
     if (neighbors.length < 2) return [];
     const ordered = neighbors
@@ -457,7 +501,7 @@ export default function Home() {
       if (delta <= 0) delta += Math.PI * 2;
       return { start: first.angle, end: second.angle, angle: (delta * 180) / Math.PI };
     });
-  }, [active, atoms, bonds]);
+  }, [active, atomById, bonds]);
 
   useEffect(() => {
     atomsRef.current = atoms;
@@ -465,6 +509,9 @@ export default function Home() {
   useEffect(() => {
     bondsRef.current = bonds;
   }, [bonds]);
+  useEffect(() => {
+    spawnFormulaRef.current = spawnFormula;
+  });
   useEffect(() => {
     let active = true;
     loadRDKit((progress) => {
@@ -485,6 +532,11 @@ export default function Home() {
       active = false;
     };
   }, []);
+  useEffect(() => {
+    if (!boot.ready || defaultCompoundLoaded.current) return;
+    defaultCompoundLoaded.current = true;
+    void spawnFormulaRef.current("fentanyl");
+  }, [boot.ready]);
 
   const namedCompounds = useMemo(() => {
     const adjacency = new Map<number, number[]>();
@@ -504,11 +556,11 @@ export default function Home() {
         ids.push(id);
         (adjacency.get(id) ?? []).forEach((next) => stack.push(next));
       }
-      const members = ids.map((id) => atoms.find((atom) => atom.id === id)!).filter(Boolean);
-      const counts = members.reduce<Record<string, number>>(
-        (result, atom) => ({ ...result, [atom.element]: (result[atom.element] ?? 0) + 1 }),
-        {},
-      );
+      const members = ids.map((id) => atomById.get(id)!).filter(Boolean);
+      const counts: Record<string, number> = {};
+      members.forEach((atom) => {
+        counts[atom.element] = (counts[atom.element] ?? 0) + 1;
+      });
       const signature = Object.keys(counts)
         .sort()
         .map((symbol) => symbol + (counts[symbol] > 1 ? counts[symbol] : ""))
@@ -529,7 +581,18 @@ export default function Home() {
         },
       ];
     });
-  }, [atoms, bonds]);
+  }, [atomById, atoms, bonds]);
+  const activeMolecule =
+    formulaGroups.find((group) => group.id === selectedMolecule) ??
+    namedCompounds
+      .filter((compound) => -Math.min(...compound.atomIds) === selectedMolecule)
+      .map<FormulaGroup>((compound) => ({
+        id: -Math.min(...compound.atomIds),
+        atomIds: compound.atomIds,
+        formula: compound.formula,
+        name: compound.name,
+        source: "canvas structure",
+      }))[0];
 
   const dipoleAttractions = useMemo(() => {
     const covalent = bonds.filter((bond) => bond.type === "covalent");
@@ -547,7 +610,7 @@ export default function Home() {
         const id = stack.pop()!;
         if (visited.has(id)) continue;
         visited.add(id);
-        const atom = atoms.find((item) => item.id === id);
+        const atom = atomById.get(id);
         if (atom) members.push(atom);
         (adjacency.get(id) ?? []).forEach((next) => stack.push(next));
       }
@@ -556,14 +619,14 @@ export default function Home() {
         (bond) => memberIds.has(bond.from) && memberIds.has(bond.to),
       );
       const polar = componentBonds.some((bond) => {
-        const from = atoms.find((atom) => atom.id === bond.from)!,
-          to = atoms.find((atom) => atom.id === bond.to)!;
+        const from = atomById.get(bond.from)!,
+          to = atomById.get(bond.to)!;
         return Math.abs(pauling(from.element) - pauling(to.element)) >= 0.4;
       });
-      const counts = members.reduce<Record<string, number>>(
-        (result, atom) => ({ ...result, [atom.element]: (result[atom.element] ?? 0) + 1 }),
-        {},
-      );
+      const counts: Record<string, number> = {};
+      members.forEach((atom) => {
+        counts[atom.element] = (counts[atom.element] ?? 0) + 1;
+      });
       const signature = Object.keys(counts)
         .sort()
         .map((symbol) => symbol + (counts[symbol] > 1 ? counts[symbol] : ""))
@@ -580,52 +643,77 @@ export default function Home() {
         },
       ];
     });
-    return polarComponents.flatMap((first, index) =>
-      polarComponents.slice(index + 1).flatMap((second, offset) => {
-        const centerDistance = Math.hypot(first.x - second.x, first.y - second.y);
-        if (centerDistance > 900) return [];
-        const options = [
-          {
-            from: first,
-            to: second,
-            polarityDistance: Math.hypot(
-              first.positive.x - second.negative.x,
-              first.positive.y - second.negative.y,
-            ),
-          },
-          {
-            from: second,
-            to: first,
-            polarityDistance: Math.hypot(
-              second.positive.x - first.negative.x,
-              second.positive.y - first.negative.y,
-            ),
-          },
-        ].sort((a, b) => a.polarityDistance - b.polarityDistance);
-        const { from, to } = options[0];
-        const distance = Math.hypot(to.x - from.x, to.y - from.y);
-        if (!distance) return [];
-        const dx = (to.x - from.x) / distance,
-          dy = (to.y - from.y) / distance,
-          atomRadius = 86,
-          fromExtent =
-            Math.max(
-              ...from.members.map((atom) => (atom.x - from.x) * dx + (atom.y - from.y) * dy),
-            ) + atomRadius,
-          toExtent =
-            Math.max(...to.members.map((atom) => (to.x - atom.x) * dx + (to.y - atom.y) * dy)) +
-            atomRadius;
-        if (fromExtent + toExtent >= distance) return [];
-        return [
-          {
-            id: `${index}-${index + offset + 1}`,
-            from: { x: from.x + dx * fromExtent, y: from.y + dy * fromExtent },
-            to: { x: to.x - dx * toExtent, y: to.y - dy * toExtent },
-          },
-        ];
-      }),
-    );
-  }, [atoms, bonds]);
+    const nearestPairs = new Map<
+      string,
+      {
+        id: string;
+        first: (typeof polarComponents)[number];
+        second: (typeof polarComponents)[number];
+      }
+    >();
+    polarComponents.forEach((first, index) => {
+      const nearest = polarComponents
+        .map((second, secondIndex) => ({
+          second,
+          secondIndex,
+          distance: Math.hypot(first.x - second.x, first.y - second.y),
+        }))
+        .filter((candidate) => candidate.secondIndex !== index && candidate.distance <= 900)
+        .sort((a, b) => a.distance - b.distance)[0];
+      if (!nearest) return;
+      const low = Math.min(index, nearest.secondIndex),
+        high = Math.max(index, nearest.secondIndex),
+        id = `${low}-${high}`;
+      nearestPairs.set(id, {
+        id,
+        first: polarComponents[low],
+        second: polarComponents[high],
+      });
+    });
+
+    return [...nearestPairs.values()].flatMap(({ id, first, second }) => {
+      const centerDistance = Math.hypot(first.x - second.x, first.y - second.y);
+      if (centerDistance > 900) return [];
+      const options = [
+        {
+          from: first,
+          to: second,
+          polarityDistance: Math.hypot(
+            first.positive.x - second.negative.x,
+            first.positive.y - second.negative.y,
+          ),
+        },
+        {
+          from: second,
+          to: first,
+          polarityDistance: Math.hypot(
+            second.positive.x - first.negative.x,
+            second.positive.y - first.negative.y,
+          ),
+        },
+      ].sort((a, b) => a.polarityDistance - b.polarityDistance);
+      const { from, to } = options[0];
+      const distance = Math.hypot(to.x - from.x, to.y - from.y);
+      if (!distance) return [];
+      const dx = (to.x - from.x) / distance,
+        dy = (to.y - from.y) / distance,
+        atomRadius = 86,
+        fromExtent =
+          Math.max(...from.members.map((atom) => (atom.x - from.x) * dx + (atom.y - from.y) * dy)) +
+          atomRadius,
+        toExtent =
+          Math.max(...to.members.map((atom) => (to.x - atom.x) * dx + (to.y - atom.y) * dy)) +
+          atomRadius;
+      if (fromExtent + toExtent >= distance) return [];
+      return [
+        {
+          id,
+          from: { x: from.x + dx * fromExtent, y: from.y + dy * fromExtent },
+          to: { x: to.x - dx * toExtent, y: to.y - dy * toExtent },
+        },
+      ];
+    });
+  }, [atomById, atoms, bonds]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -653,7 +741,7 @@ export default function Home() {
         target instanceof HTMLInputElement ||
         target instanceof HTMLTextAreaElement ||
         target.isContentEditable;
-      if (event.ctrlKey && event.shiftKey && event.key.toLowerCase() === "p") {
+      if (event.ctrlKey && !event.shiftKey && event.key.toLowerCase() === "p") {
         event.preventDefault();
         setFormulaOpen(true);
         setFormulaError("");
@@ -808,14 +896,18 @@ export default function Home() {
         if (!from || !to) return [];
         const first = atomById.get(from)!,
           second = atomById.get(to)!,
-          inferred = stableBond(first.element, second.element);
+          inferred = stableBond(first.element, second.element),
+          order =
+            inferred?.type === "ionic" || inferred?.type === "metallic"
+              ? 1
+              : (Math.max(1, Math.min(3, bond.order)) as 1 | 2 | 3);
         return [
           {
             id: Date.now() + index,
             from,
             to,
             type: inferred?.type ?? "covalent",
-            order: Math.max(1, Math.min(3, bond.order)) as 1 | 2 | 3,
+            order,
           },
         ];
       });
@@ -1176,6 +1268,40 @@ export default function Home() {
     }
   }
 
+  function selectCompound(groupId: number, atomIds: number[], additive = false) {
+    setSelected((current) => (additive ? [...new Set([...current, ...atomIds])] : atomIds));
+    setSelectedMolecule(groupId);
+    setSelectedBond(null);
+    setSelectedElectron(null);
+  }
+
+  function beginCompoundDrag(
+    event: React.PointerEvent<HTMLButtonElement>,
+    groupId: number,
+    atomIds: number[],
+  ) {
+    if (event.button !== 0) return;
+    event.stopPropagation();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    const moveIds = atomIds.every((id) => selectedAtomIds.has(id))
+        ? selected
+        : event.shiftKey
+          ? [...new Set([...selected, ...atomIds])]
+          : atomIds,
+      moveSet = new Set(moveIds);
+    selectCompound(groupId, moveIds);
+    gesture.current = {
+      type: "selection",
+      sx: event.clientX,
+      sy: event.clientY,
+      origins: new Map(
+        atoms
+          .filter((atom) => moveSet.has(atom.id))
+          .map((atom) => [atom.id, { x: atom.x, y: atom.y }]),
+      ),
+    };
+  }
+
   return (
     <>
       {!boot.ready && (
@@ -1231,10 +1357,6 @@ export default function Home() {
             <button type="button" className="open-periodic" onClick={() => setPeriodicOpen(true)}>
               <Atom /> Periodic table
             </button>
-            <div className="tray-heading">
-              <b>Add atoms</b>
-              <small>Click or drag onto canvas</small>
-            </div>
             <label className="element-search">
               <MagnifyingGlass />
               <input
@@ -1406,6 +1528,7 @@ export default function Home() {
               <button
                 type="button"
                 className="structure-lookup"
+                aria-keyshortcuts="Control+P"
                 onClick={() => {
                   setFormulaOpen(true);
                   setFormulaError("");
@@ -1413,13 +1536,10 @@ export default function Home() {
                 }}
               >
                 <MagnifyingGlass /> Add molecule
+                <span className="shortcut-tooltip" role="tooltip">
+                  Shortcut: Ctrl + P
+                </span>
               </button>
-              <span>
-                <Atom /> Ringed atom electrons appear in shared pairs
-              </span>
-              <output className="zoom-level" aria-label="Canvas zoom">
-                {Math.round(scale * 100)}%
-              </output>
             </div>
             {selectionBox && (
               <div
@@ -1437,16 +1557,19 @@ export default function Home() {
               />
             )}
             {validationNotice && <output className="validation-notice">{validationNotice}</output>}
-            <div className="canvas-world">
+            <div
+              className="canvas-world"
+              style={{ transform: `translate3d(${pan.x}px, ${pan.y}px, 0)` }}
+            >
               <svg className="bond-layer" width="1600" height="1000">
                 {bonds.map((bond) => {
-                  const from = atoms.find((atom) => atom.id === bond.from);
-                  const to = atoms.find((atom) => atom.id === bond.to);
+                  const from = atomById.get(bond.from);
+                  const to = atomById.get(bond.to);
                   if (!from || !to) return null;
-                  const x1 = pan.x + from.x * scale,
-                    y1 = pan.y + from.y * scale,
-                    x2 = pan.x + to.x * scale,
-                    y2 = pan.y + to.y * scale,
+                  const x1 = from.x * scale,
+                    y1 = from.y * scale,
+                    x2 = to.x * scale,
+                    y2 = to.y * scale,
                     mx = (x1 + x2) / 2,
                     my = (y1 + y2) / 2;
                   const fromSubshells = subshellsForElectronCount(
@@ -1469,7 +1592,7 @@ export default function Home() {
                           (atomId) => atomId === from.id || atomId === to.id,
                         ) &&
                         [item.from, item.to].some(
-                          (atomId) => atoms.find((atom) => atom.id === atomId)?.element === "Li",
+                          (atomId) => atomById.get(atomId)?.element === "Li",
                         ),
                     );
                   return (
@@ -1509,10 +1632,10 @@ export default function Home() {
                   );
                 })}
                 {dipoleAttractions.map((attraction) => {
-                  const x1 = pan.x + attraction.from.x * scale,
-                    y1 = pan.y + attraction.from.y * scale,
-                    x2 = pan.x + attraction.to.x * scale,
-                    y2 = pan.y + attraction.to.y * scale,
+                  const x1 = attraction.from.x * scale,
+                    y1 = attraction.from.y * scale,
+                    x2 = attraction.to.x * scale,
+                    y2 = attraction.to.y * scale,
                     mx = (x1 + x2) / 2,
                     my = (y1 + y2) / 2;
                   return (
@@ -1532,8 +1655,8 @@ export default function Home() {
                 })}
                 {active &&
                   bondAngles.map((guide, index) => {
-                    const cx = pan.x + active.x * scale,
-                      cy = pan.y + active.y * scale,
+                    const cx = active.x * scale,
+                      cy = active.y * scale,
                       r = 58 * scale,
                       startX = cx + Math.cos(guide.start) * r,
                       startY = cy + Math.sin(guide.start) * r,
@@ -1557,11 +1680,11 @@ export default function Home() {
                   })}
               </svg>
               {bonds.map((bond) => {
-                const from = atoms.find((atom) => atom.id === bond.from),
-                  to = atoms.find((atom) => atom.id === bond.to);
+                const from = atomById.get(bond.from),
+                  to = atomById.get(bond.to);
                 if (!from || !to) return null;
-                const mx = pan.x + ((from.x + to.x) * scale) / 2,
-                  my = pan.y + ((from.y + to.y) * scale) / 2;
+                const mx = ((from.x + to.x) * scale) / 2,
+                  my = ((from.y + to.y) * scale) / 2;
                 return (
                   <button
                     type="button"
@@ -1586,23 +1709,43 @@ export default function Home() {
                   className="compound-label"
                   key={`${compound.formula}-${compound.x}-${compound.y}`}
                   style={{
-                    transform: `translate(${pan.x + compound.x * scale}px, ${pan.y + compound.y * scale}px)`,
+                    transform: `translate(${compound.x * scale}px, ${compound.y * scale}px)`,
                   }}
-                  onClick={(event) => {
-                    event.stopPropagation();
+                  onPointerDown={(event) => {
                     const group = formulaGroups.find(
                       (candidate) =>
                         candidate.atomIds.length === compound.atomIds.length &&
                         candidate.atomIds.every((id) => compound.atomIds.includes(id)),
                     );
-                    setSelected((current) =>
-                      event.shiftKey
-                        ? [...new Set([...current, ...compound.atomIds])]
-                        : compound.atomIds,
+                    beginCompoundDrag(
+                      event,
+                      group?.id ?? -Math.min(...compound.atomIds),
+                      compound.atomIds,
                     );
-                    setSelectedMolecule(group?.id ?? null);
-                    setSelectedBond(null);
-                    setSelectedElectron(null);
+                  }}
+                  onPointerMove={pointerMove}
+                  onPointerUp={() => {
+                    gesture.current = null;
+                  }}
+                  onPointerCancel={() => {
+                    gesture.current = null;
+                  }}
+                  onLostPointerCapture={() => {
+                    gesture.current = null;
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.key !== "Enter" && event.key !== " ") return;
+                    event.preventDefault();
+                    const group = formulaGroups.find(
+                      (candidate) =>
+                        candidate.atomIds.length === compound.atomIds.length &&
+                        candidate.atomIds.every((id) => compound.atomIds.includes(id)),
+                    );
+                    selectCompound(
+                      group?.id ?? -Math.min(...compound.atomIds),
+                      compound.atomIds,
+                      event.shiftKey,
+                    );
                   }}
                 >
                   <b>{compound.formula}</b>
@@ -1616,7 +1759,7 @@ export default function Home() {
                 )
                 .flatMap((group) => {
                   const members = group.atomIds
-                    .map((id) => atoms.find((atom) => atom.id === id))
+                    .map((id) => atomById.get(id))
                     .filter((atom): atom is AtomNode => Boolean(atom));
                   if (members.length !== group.atomIds.length) return [];
                   const x = members.reduce((sum, atom) => sum + atom.x, 0) / members.length,
@@ -1627,18 +1770,25 @@ export default function Home() {
                       className="compound-label imported"
                       key={group.id}
                       style={{
-                        transform: `translate(${pan.x + x * scale}px,${pan.y + y * scale}px)`,
+                        transform: `translate(${x * scale}px,${y * scale}px)`,
                       }}
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        setSelected((current) =>
-                          event.shiftKey
-                            ? [...new Set([...current, ...group.atomIds])]
-                            : group.atomIds,
-                        );
-                        setSelectedMolecule(group.id);
-                        setSelectedBond(null);
-                        setSelectedElectron(null);
+                      onPointerDown={(event) => {
+                        beginCompoundDrag(event, group.id, group.atomIds);
+                      }}
+                      onPointerMove={pointerMove}
+                      onPointerUp={() => {
+                        gesture.current = null;
+                      }}
+                      onPointerCancel={() => {
+                        gesture.current = null;
+                      }}
+                      onLostPointerCapture={() => {
+                        gesture.current = null;
+                      }}
+                      onKeyDown={(event) => {
+                        if (event.key !== "Enter" && event.key !== " ") return;
+                        event.preventDefault();
+                        selectCompound(group.id, group.atomIds, event.shiftKey);
                       }}
                     >
                       <b>{group.formula}</b>
@@ -1649,31 +1799,9 @@ export default function Home() {
               {atoms.map((atom) => {
                 const item = elements[atom.element];
                 const isSelected = selectedAtomIds.has(atom.id);
-                const sharedElectrons = bonds
-                  .filter(
-                    (bond) =>
-                      bond.type === "covalent" && (bond.from === atom.id || bond.to === atom.id),
-                  )
-                  .reduce((total, bond) => total + bond.order, 0);
-                const sharedFrom = bonds
-                  .filter(
-                    (bond) =>
-                      bond.type === "covalent" && (bond.from === atom.id || bond.to === atom.id),
-                  )
-                  .flatMap((bond) => {
-                    const partner = atoms.find(
-                      (item) => item.id === (bond.from === atom.id ? bond.to : bond.from),
-                    );
-                    if (!partner) return [];
-                    const subshell = subshellsForElectronCount(
-                      elements[partner.element].z - partner.charge + partner.electronOffset,
-                    ).at(-1);
-                    return Array.from({ length: bond.order }, () => ({
-                      color: subshellColors[subshell?.kind ?? "s"],
-                      label: partner.element,
-                      subshell: subshell?.label ?? "unknown",
-                    }));
-                  });
+                const bondVisual = atomBondVisuals.get(atom.id);
+                const sharedElectrons = bondVisual?.sharedElectrons ?? 0;
+                const sharedFrom = bondVisual?.sharedFrom ?? [];
                 const atomSize = 200 * scale;
                 return (
                   <div
@@ -1683,7 +1811,7 @@ export default function Home() {
                     style={{
                       width: atomSize,
                       height: atomSize,
-                      transform: `translate(${pan.x + atom.x * scale - atomSize / 2}px, ${pan.y + atom.y * scale - atomSize / 2}px)`,
+                      transform: `translate(${atom.x * scale - atomSize / 2}px, ${atom.y * scale - atomSize / 2}px)`,
                     }}
                     key={atom.id}
                     onKeyDown={(event) => {
@@ -1763,7 +1891,7 @@ export default function Home() {
                 <div
                   className="canvas-atom-controls"
                   style={{
-                    transform: `translate(${pan.x + active.x * scale - 135}px,${pan.y + active.y * scale - 100 * scale - 48}px)`,
+                    transform: `translate(${active.x * scale - 135}px,${active.y * scale - 100 * scale - 48}px)`,
                   }}
                   onPointerDown={(event) => event.stopPropagation()}
                   role="presentation"
@@ -1943,7 +2071,6 @@ export default function Home() {
                   </section>
                 )}
                 <section>
-                  <h2>Occupied subshells by shell</h2>
                   <div className="shell-groups">
                     {[...new Set(activeSubshells.map((subshell) => subshell.shell))].map(
                       (shell) => {

@@ -238,18 +238,6 @@ button {
 .atom-inspector label {
   font-size: 12px;
 }
-.tray-heading {
-  display: grid;
-  gap: 3px;
-  padding: 0 5px 13px;
-}
-.tray-heading b {
-  font-size: 15px;
-}
-.tray-heading small {
-  color: var(--muted);
-  font-size: 12px;
-}
 .element-search {
   height: 40px;
   margin: 0 2px 9px;
@@ -398,15 +386,6 @@ button {
   border-radius: 10px;
   box-shadow: 0 14px 36px #0009;
 }
-.bond-toolbar > span {
-  padding: 0 10px;
-  color: var(--muted);
-  font: 11px var(--font-geist-mono);
-  white-space: nowrap;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
 .bond-toolbar button {
   border: 0;
   border-radius: 7px;
@@ -422,9 +401,36 @@ button {
   background: #313244;
 }
 .bond-toolbar .structure-lookup {
+  position: relative;
+  min-width: 116px;
+  justify-content: center;
   background: var(--accent);
   color: #11111b;
   font-weight: 650;
+  white-space: nowrap;
+}
+.shortcut-tooltip {
+  position: absolute;
+  top: calc(100% + 9px);
+  left: 50%;
+  padding: 5px 8px;
+  transform: translate(-50%, -3px);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #181825;
+  color: var(--text);
+  box-shadow: 0 6px 18px #0008;
+  opacity: 0;
+  pointer-events: none;
+  font: 10px var(--font-geist-mono);
+  transition:
+    opacity 0.16s ease,
+    transform 0.16s ease;
+}
+.structure-lookup:hover .shortcut-tooltip,
+.structure-lookup:focus-visible .shortcut-tooltip {
+  transform: translate(-50%, 0);
+  opacity: 1;
 }
 .bond-toolbar .structure-lookup:hover:not(:disabled) {
   background: #b4befe;
@@ -432,14 +438,6 @@ button {
 .bond-toolbar button:disabled {
   color: #585b70;
   cursor: not-allowed;
-}
-.zoom-level {
-  min-width: 42px;
-  padding: 0 7px;
-  border-left: 1px solid var(--line);
-  color: #bac2de;
-  font: 11px var(--font-geist-mono);
-  text-align: center;
 }
 .bond-layer {
   position: absolute;
@@ -1583,7 +1581,6 @@ button {
     overflow: hidden;
   }
   .product-mark,
-  .tray-heading,
   .tray-guide {
     display: none;
   }
@@ -1647,9 +1644,6 @@ button {
     max-width: calc(100% - 16px);
     left: 8px;
     transform: none;
-  }
-  .bond-toolbar > span {
-    display: flex;
   }
   .canvas-atom {
     width: 170px;

@@ -1,5 +1,7 @@
 "use client";
 
+import { memo } from "react";
+
 export type Subshell = { label: string; count: number; shell: number; kind: "s" | "p" | "d" | "f" };
 
 const subshellColors = {
@@ -11,7 +13,7 @@ const subshellColors = {
 
 export { subshellColors };
 
-export default function AtomScene({
+function AtomScene({
   symbol,
   atomicNumber,
   subshells,
@@ -167,3 +169,37 @@ export default function AtomScene({
     </svg>
   );
 }
+
+export default memo(AtomScene, (previous, next) => {
+  const previousSources = previous.sharedFrom ?? [],
+    nextSources = next.sharedFrom ?? [];
+  if (
+    previous.symbol !== next.symbol ||
+    previous.atomicNumber !== next.atomicNumber ||
+    previous.charge !== next.charge ||
+    (previous.sharedElectrons ?? 0) !== (next.sharedElectrons ?? 0) ||
+    previous.subshells.length !== next.subshells.length ||
+    previousSources.length !== nextSources.length
+  )
+    return false;
+
+  return (
+    previous.subshells.every((subshell, index) => {
+      const candidate = next.subshells[index];
+      return (
+        subshell.label === candidate.label &&
+        subshell.count === candidate.count &&
+        subshell.shell === candidate.shell &&
+        subshell.kind === candidate.kind
+      );
+    }) &&
+    previousSources.every((source, index) => {
+      const candidate = nextSources[index];
+      return (
+        source.color === candidate.color &&
+        source.label === candidate.label &&
+        source.subshell === candidate.subshell
+      );
+    })
+  );
+});

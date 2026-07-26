@@ -1,0 +1,6 @@
+services:
+  electron:
+    image: ghcr.io/kk-spartans/chemistry-visualizer/electron-app:latest
+    ports:
+      - "${ELECTRON_PORT:-3000}:8080"
+    restart: unless-stopped

@@ -1,0 +1,19 @@
+{
+  "$schema": "https://react.doctor/schema/config.json",
+  "rootDir": "..",
+  "rules": {
+    "react-doctor/react-compiler-no-manual-memoization": "off",
+    "react-doctor/js-index-maps": "off",
+    "react-doctor/prefer-tag-over-role": "off",
+    "react-doctor/js-tosorted-immutable": "off",
+    "react-doctor/no-giant-component": "off",
+    "react-doctor/js-flatmap-filter": "off",
+    "react-doctor/js-combine-iterations": "off",
+    "react-doctor/prefer-useReducer": "off",
+    "react-doctor/only-export-components": "off",
+    "react-doctor/no-spread-accumulator-in-reduce": "off"
+  },
+  "ignore": {
+    "files": ["devops/check.ts", "devops/copy-rdkit.ts"]
+  }
+}

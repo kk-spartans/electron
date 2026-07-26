@@ -1,0 +1,21 @@
+{
+  "$schema": "../node_modules/oxlint/configuration_schema.json",
+  "plugins": ["react", "typescript", "unicorn", "import", "jsx-a11y", "nextjs"],
+  "env": {
+    "browser": true,
+    "node": true
+  },
+  "rules": {
+    "eqeqeq": "error",
+    "no-console": "off",
+    "no-unused-vars": "error",
+    "react/jsx-key": "error",
+    "jsx-a11y/prefer-tag-over-role": "off",
+    "jsx-a11y/no-noninteractive-element-interactions": "off"
+  },
+  "settings": {
+    "react": {
+      "version": "19.2.4"
+    }
+  }
+}

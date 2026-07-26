@@ -7,6 +7,12 @@ const destination = resolve(root, "public/rdkit");
 
 await mkdir(destination, { recursive: true });
 await Promise.all([
-  copyFile(resolve(root, "node_modules/@rdkit/rdkit/dist/RDKit_minimal.wasm"), resolve(destination, "RDKit_minimal.wasm")),
-  copyFile(resolve(root, "node_modules/@rdkit/rdkit/dist/RDKit_minimal.js"), resolve(destination, "RDKit_minimal.js")),
+  copyFile(
+    resolve(root, "node_modules/@rdkit/rdkit/dist/RDKit_minimal.wasm"),
+    resolve(destination, "RDKit_minimal.wasm"),
+  ),
+  copyFile(
+    resolve(root, "node_modules/@rdkit/rdkit/dist/RDKit_minimal.js"),
+    resolve(destination, "RDKit_minimal.js"),
+  ),
 ]);

@@ -1,0 +1,8 @@
+.git
+.devenv
+.direnv
+.next
+node_modules
+out
+public/rdkit
+*.tsbuildinfo

@@ -1,0 +1,15 @@
+inputs:
+  devenv:
+    url: github:cachix/devenv
+    inputs:
+      nixpkgs:
+        follows: nixpkgs
+  git-hooks:
+    url: github:cachix/git-hooks.nix
+    inputs:
+      nixpkgs:
+        follows: nixpkgs
+  nix-packages:
+    url: github:kk-spartans/nix-packages
+  nixpkgs:
+    url: github:NixOS/nixpkgs/nixos-unstable

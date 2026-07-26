@@ -1,18 +1,25 @@
 import type { RDKitLoader, RDKitModule } from "@rdkit/rdkit";
 
 type ValidationAtom = { id: number; element: string; x: number; y: number; charge: number };
-type ValidationBond = { from: number; to: number; type: "covalent" | "ionic" | "metallic"; order: 1 | 2 | 3 };
+type ValidationBond = {
+  from: number;
+  to: number;
+  type: "covalent" | "ionic" | "metallic";
+  order: 1 | 2 | 3;
+};
 
 let modulePromise: Promise<RDKitModule> | undefined;
 
 function loadScript() {
-  const rdkitWindow=window as unknown as {initRDKitModule?:RDKitLoader};
+  const rdkitWindow = window as unknown as { initRDKitModule?: RDKitLoader };
   if (rdkitWindow.initRDKitModule) return Promise.resolve();
   return new Promise<void>((resolve, reject) => {
-    const existing = document.querySelector<HTMLScriptElement>('script[data-rdkit]');
+    const existing = document.querySelector<HTMLScriptElement>("script[data-rdkit]");
     if (existing) {
       existing.addEventListener("load", () => resolve(), { once: true });
-      existing.addEventListener("error", () => reject(new Error("Could not load RDKit.")), { once: true });
+      existing.addEventListener("error", () => reject(new Error("Could not load RDKit.")), {
+        once: true,
+      });
       return;
     }
     const script = document.createElement("script");
@@ -27,11 +34,13 @@ function loadScript() {
 function molBlock(atoms: ValidationAtom[], bonds: ValidationBond[]) {
   const atomIndex = new Map(atoms.map((atom, index) => [atom.id, index + 1]));
   const covalent = bonds.filter((bond) => bond.type === "covalent");
-  const atomLines = atoms.map((atom) =>
-    `${atom.x.toFixed(4).padStart(10)}${(-atom.y).toFixed(4).padStart(10)}    0.0000 ${atom.element.padEnd(3)} 0  0  0  0  0  0  0  0  0  0  0  0`,
+  const atomLines = atoms.map(
+    (atom) =>
+      `${atom.x.toFixed(4).padStart(10)}${(-atom.y).toFixed(4).padStart(10)}    0.0000 ${atom.element.padEnd(3)} 0  0  0  0  0  0  0  0  0  0  0  0`,
   );
-  const bondLines = covalent.map((bond) =>
-    `${String(atomIndex.get(bond.from)).padStart(3)}${String(atomIndex.get(bond.to)).padStart(3)}${String(bond.order).padStart(3)}  0  0  0  0`,
+  const bondLines = covalent.map(
+    (bond) =>
+      `${String(atomIndex.get(bond.from)).padStart(3)}${String(atomIndex.get(bond.to)).padStart(3)}${String(bond.order).padStart(3)}  0  0  0  0`,
   );
   const charged = atoms.filter((atom) => atom.charge !== 0);
   const chargeLines = Array.from({ length: Math.ceil(charged.length / 8) }, (_, chunk) => {
@@ -79,19 +88,25 @@ export function loadRDKit(onProgress?: (progress: number) => void) {
       onProgress?.(0.9);
     }
     await loadScript();
-    const init = (window as unknown as {initRDKitModule:RDKitLoader}).initRDKitModule;
-    const module = await (init as unknown as (options: { wasmBinary: Uint8Array }) => Promise<RDKitModule>)({ wasmBinary });
+    const init = (window as unknown as { initRDKitModule: RDKitLoader }).initRDKitModule;
+    const rdkitModule = await (
+      init as unknown as (options: { wasmBinary: Uint8Array }) => Promise<RDKitModule>
+    )({ wasmBinary });
     onProgress?.(1);
-    return module;
+    return rdkitModule;
   })();
   return modulePromise;
 }
 
 export async function validateStructure(atoms: ValidationAtom[], bonds: ValidationBond[]) {
   try {
-    const module = await loadRDKit();
-    const molecule = module.get_mol(molBlock(atoms, bonds), JSON.stringify({ sanitize: true, removeHs: false }));
-    if (!molecule) return { valid: false, reason: "RDKit rejected this atom valence or bond arrangement." };
+    const rdkitModule = await loadRDKit();
+    const molecule = rdkitModule.get_mol(
+      molBlock(atoms, bonds),
+      JSON.stringify({ sanitize: true, removeHs: false }),
+    );
+    if (!molecule)
+      return { valid: false, reason: "RDKit rejected this atom valence or bond arrangement." };
     const canonicalSmiles = molecule.get_smiles();
     molecule.delete();
     return { valid: true, canonicalSmiles };

@@ -132,7 +132,7 @@ button {
 .validation-notice {
   position: absolute;
   z-index: 20;
-  top: 48px;
+  top: 78px;
   left: 50%;
   max-width: min(430px, calc(100% - 32px));
   transform: translateX(-50%);
@@ -409,6 +409,19 @@ button {
   font-weight: 650;
   white-space: nowrap;
 }
+.bond-toolbar .save-canvas {
+  position: relative;
+  min-width: 82px;
+  justify-content: center;
+  border: 1px solid var(--line);
+  background: #181825;
+  color: var(--text);
+  white-space: nowrap;
+}
+.bond-toolbar .save-canvas:hover {
+  border-color: var(--accent);
+  background: #313244;
+}
 .shortcut-tooltip {
   position: absolute;
   top: calc(100% + 9px);
@@ -427,8 +440,8 @@ button {
     opacity 0.16s ease,
     transform 0.16s ease;
 }
-.structure-lookup:hover .shortcut-tooltip,
-.structure-lookup:focus-visible .shortcut-tooltip {
+.toolbar-action:hover .shortcut-tooltip,
+.toolbar-action:focus-visible .shortcut-tooltip {
   transform: translate(-50%, 0);
   opacity: 1;
 }
@@ -1258,6 +1271,92 @@ button {
   padding: 18px;
   background: #000b;
 }
+.save-dialog {
+  position: absolute;
+  inset: auto;
+  top: 50%;
+  left: 50%;
+  width: min(440px, calc(100vw - 28px));
+  margin: 0;
+  transform: translate(-50%, -56%);
+  padding: 16px;
+  border: 1px solid #45475a;
+  border-radius: 10px;
+  background: #11111b;
+  color: var(--text);
+  box-shadow: 0 24px 70px #000b;
+}
+.save-dialog form {
+  display: grid;
+  gap: 11px;
+}
+.save-dialog label {
+  font-size: 12px;
+  font-weight: 650;
+}
+.save-name-field {
+  display: flex;
+  align-items: center;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: #000;
+}
+.save-name-field:focus-within {
+  border-color: var(--accent);
+}
+.save-name-field input {
+  min-width: 0;
+  flex: 1;
+  height: 40px;
+  padding: 0 10px;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: #fff;
+  font: 13px var(--font-geist-mono);
+}
+.save-name-field span {
+  align-self: stretch;
+  display: flex;
+  align-items: center;
+  padding: 0 10px;
+  border-left: 1px solid var(--line);
+  color: #bac2de;
+  background: #181825;
+  font: 11px var(--font-geist-mono);
+}
+.save-dialog p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.45;
+}
+.save-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 7px;
+}
+.save-dialog-actions button {
+  min-height: 36px;
+  padding: 0 12px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: #181825;
+  color: var(--text);
+  cursor: pointer;
+}
+.save-dialog-actions button[type="submit"] {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: #11111b;
+  font-weight: 650;
+}
+.save-dialog-actions button:hover,
+.save-dialog-actions button:focus-visible {
+  border-color: var(--accent);
+  outline: none;
+}
 .formula-command {
   position: absolute;
   inset: auto;
@@ -1401,8 +1500,14 @@ button {
   background: #050806c7;
 }
 .periodic-panel {
-  width: min(1400px, 100%);
+  position: absolute;
+  inset: auto;
+  top: 50%;
+  left: 50%;
+  width: min(1400px, calc(100vw - 36px));
   max-height: calc(100dvh - 36px);
+  margin: 0;
+  transform: translate(-50%, -50%);
   overflow: auto;
   padding: 15px;
   border: 1px solid #45475a;
@@ -1424,8 +1529,8 @@ button {
   background: #0b0b12f2;
 }
 .periodic-panel header small {
-  color: var(--muted);
-  font: 8px var(--font-geist-mono);
+  color: #cdd6f4;
+  font: 10px var(--font-geist-mono);
 }
 .periodic-panel header h1 {
   margin: 2px 0 0;
@@ -1439,7 +1544,14 @@ button {
   border: 1px solid var(--line);
   border-radius: 7px;
   background: var(--surface);
+  color: #fff;
   cursor: pointer;
+}
+.periodic-panel header > button:hover,
+.periodic-panel header > button:focus-visible {
+  border-color: var(--accent);
+  background: #313244;
+  outline: none;
 }
 .periodic-filters {
   display: flex;
@@ -1450,28 +1562,28 @@ button {
   grid-template-columns: auto auto;
   align-items: center;
   gap: 6px;
-  color: var(--muted);
-  font: 8px var(--font-geist-mono);
+  color: #cdd6f4;
+  font: 10px var(--font-geist-mono);
 }
 .periodic-filters select {
-  height: 30px;
+  height: 34px;
   border: 1px solid var(--line);
   border-radius: 6px;
   padding: 0 7px;
   outline: 0;
   background: #181825;
   color: var(--text);
-  font: 9px var(--font-geist-mono);
+  font: 11px var(--font-geist-mono);
 }
 .periodic-filters select:focus {
   border-color: var(--accent);
 }
 .periodic-grid {
-  min-width: 900px;
+  min-width: 1120px;
   display: grid;
   grid-template-columns: repeat(18, minmax(46px, 1fr));
-  grid-template-rows: repeat(9, 62px);
-  gap: 4px;
+  grid-template-rows: repeat(9, 72px);
+  gap: 5px;
 }
 .periodic-grid button {
   min-width: 0;
@@ -1480,7 +1592,7 @@ button {
   grid-template-rows: auto auto auto;
   align-content: center;
   gap: 1px;
-  padding: 4px;
+  padding: 6px;
   overflow: hidden;
   border: 1px solid #45475a;
   border-radius: 6px;
@@ -1504,24 +1616,25 @@ button {
   pointer-events: none;
 }
 .periodic-grid button small {
-  color: var(--muted);
-  font: 6px var(--font-geist-mono);
+  color: #cdd6f4;
+  font: 8px var(--font-geist-mono);
 }
 .periodic-grid button b {
   color: var(--accent);
-  font: 14px var(--font-geist-mono);
+  font: 18px var(--font-geist-mono);
 }
 .periodic-grid button span {
   grid-column: 1/-1;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 7px;
+  color: #fff;
+  font-size: 9px;
 }
 .periodic-grid button i {
   grid-column: 1/-1;
-  color: var(--muted);
-  font: 6px var(--font-geist-mono);
+  color: #bac2de;
+  font: 8px var(--font-geist-mono);
   font-style: normal;
   white-space: nowrap;
 }

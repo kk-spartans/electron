@@ -1,7 +1,14 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ArrowCounterClockwise, Atom, MagnifyingGlass, Trash, X } from "@phosphor-icons/react";
+import {
+  ArrowCounterClockwise,
+  Atom,
+  FloppyDisk,
+  MagnifyingGlass,
+  Trash,
+  X,
+} from "@phosphor-icons/react";
 import AtomScene, { Subshell, subshellColors } from "@/components/AtomScene";
 import periodicTable from "@exabyte-io/periodic-table.js/periodic-table.json";
 import { loadRDKit, validateStructure } from "@/lib/rdkit";
@@ -26,6 +33,67 @@ type FormulaGroup = {
   source?: string;
   cid?: number;
 };
+type CanvasDocument = {
+  version: 1;
+  savedAt: string;
+  atoms: AtomNode[];
+  bonds: BondEdge[];
+  formulaGroups: FormulaGroup[];
+  view: { pan: { x: number; y: number }; scale: number };
+};
+type CanvasFileHandle = {
+  createWritable: () => Promise<{
+    write: (contents: string) => Promise<void>;
+    close: () => Promise<void>;
+  }>;
+};
+
+const canvasStorageKey = "electron.canvas.v1";
+const canvasFileExtension = ".electron";
+
+function parseCanvasDocument(contents: string): CanvasDocument {
+  const candidate = JSON.parse(contents) as Partial<CanvasDocument>;
+  if (
+    candidate.version !== 1 ||
+    !Array.isArray(candidate.atoms) ||
+    !Array.isArray(candidate.bonds) ||
+    !Array.isArray(candidate.formulaGroups) ||
+    !candidate.view ||
+    !Number.isFinite(candidate.view.pan?.x) ||
+    !Number.isFinite(candidate.view.pan?.y) ||
+    !Number.isFinite(candidate.view.scale) ||
+    candidate.atoms.length > 1000
+  )
+    throw new Error("This is not a valid Electron canvas file.");
+
+  const atomIds = new Set<number>();
+  candidate.atoms.forEach((atom) => {
+    if (
+      !Number.isInteger(atom.id) ||
+      atomIds.has(atom.id) ||
+      !(atom.element in elements) ||
+      !Number.isFinite(atom.x) ||
+      !Number.isFinite(atom.y) ||
+      !Number.isFinite(atom.charge) ||
+      !Number.isFinite(atom.electronOffset)
+    )
+      throw new Error("The canvas file contains an invalid atom.");
+    atomIds.add(atom.id);
+  });
+  if (
+    candidate.bonds.some(
+      (bond) =>
+        !Number.isInteger(bond.id) ||
+        !atomIds.has(bond.from) ||
+        !atomIds.has(bond.to) ||
+        !["covalent", "ionic", "metallic"].includes(bond.type) ||
+        ![1, 2, 3].includes(bond.order),
+    )
+  )
+    throw new Error("The canvas file contains an invalid bond.");
+
+  return candidate as CanvasDocument;
+}
 
 type ElementData = {
   name: string;
@@ -372,6 +440,8 @@ export default function Home() {
   const [formulaError, setFormulaError] = useState("");
   const [formulaLoading, setFormulaLoading] = useState(false);
   const [formulaCandidates, setFormulaCandidates] = useState<StructureCandidate[]>([]);
+  const [saveDialogOpen, setSaveDialogOpen] = useState(false);
+  const [saveFileName, setSaveFileName] = useState("electron-canvas");
   const [sidebarWidths, setSidebarWidths] = useState({ left: 228, right: 336 });
   const [periodicOpen, setPeriodicOpen] = useState(false);
   const [valenceFilter, setValenceFilter] = useState("all");
@@ -385,10 +455,12 @@ export default function Home() {
     endX: number;
     endY: number;
   } | null>(null);
+  const [persistenceReady, setPersistenceReady] = useState(false);
   const [boot, setBoot] = useState({ progress: 0, ready: false, error: "" });
   const nextId = useRef(1);
   const defaultCompoundLoaded = useRef(false);
   const spawnFormulaRef = useRef<(formula: string) => Promise<void>>(async () => {});
+  const saveHandleRef = useRef<CanvasFileHandle | null>(null);
   const validationSequence = useRef(0);
   const formulaSpawnCount = useRef(0);
   const canvasRef = useRef<HTMLElement>(null);
@@ -513,6 +585,19 @@ export default function Home() {
     spawnFormulaRef.current = spawnFormula;
   });
   useEffect(() => {
+    try {
+      const stored = localStorage.getItem(canvasStorageKey);
+      if (stored) {
+        applyCanvasDocument(parseCanvasDocument(stored));
+        defaultCompoundLoaded.current = true;
+      }
+    } catch {
+      localStorage.removeItem(canvasStorageKey);
+    } finally {
+      setPersistenceReady(true);
+    }
+  }, []);
+  useEffect(() => {
     let active = true;
     loadRDKit((progress) => {
       if (active) setBoot({ progress, ready: false, error: "" });
@@ -533,10 +618,31 @@ export default function Home() {
     };
   }, []);
   useEffect(() => {
-    if (!boot.ready || defaultCompoundLoaded.current) return;
+    if (!boot.ready || !persistenceReady || defaultCompoundLoaded.current) return;
     defaultCompoundLoaded.current = true;
     void spawnFormulaRef.current("fentanyl");
-  }, [boot.ready]);
+  }, [boot.ready, persistenceReady]);
+  useEffect(() => {
+    if (!persistenceReady) return;
+    const timeout = window.setTimeout(() => {
+      const serialized = JSON.stringify({
+        version: 1,
+        savedAt: new Date().toISOString(),
+        atoms,
+        bonds,
+        formulaGroups,
+        view: { pan, scale },
+      } satisfies CanvasDocument);
+      localStorage.setItem(canvasStorageKey, serialized);
+      const handle = saveHandleRef.current;
+      if (handle)
+        void writeCanvasFile(handle, serialized).catch(() => {
+          saveHandleRef.current = null;
+          setValidationNotice("Autosave stopped because the selected file is unavailable.");
+        });
+    }, 350);
+    return () => window.clearTimeout(timeout);
+  }, [atoms, bonds, formulaGroups, pan, persistenceReady, scale]);
 
   const namedCompounds = useMemo(() => {
     const adjacency = new Map<number, number[]>();
@@ -741,11 +847,16 @@ export default function Home() {
         target instanceof HTMLInputElement ||
         target instanceof HTMLTextAreaElement ||
         target.isContentEditable;
-      if (event.ctrlKey && !event.shiftKey && event.key.toLowerCase() === "p") {
+      if (event.ctrlKey && !event.shiftKey && event.code === "Space") {
         event.preventDefault();
         setFormulaOpen(true);
         setFormulaError("");
         setFormulaCandidates([]);
+        return;
+      }
+      if (event.ctrlKey && event.shiftKey && event.key.toLowerCase() === "s") {
+        event.preventDefault();
+        setSaveDialogOpen(true);
         return;
       }
       if (event.key === "Escape" && formulaOpen) {
@@ -753,6 +864,10 @@ export default function Home() {
         setFormulaInput("");
         setFormulaError("");
         setFormulaCandidates([]);
+        return;
+      }
+      if (event.key === "Escape" && saveDialogOpen) {
+        setSaveDialogOpen(false);
         return;
       }
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "a" && !isField) {
@@ -769,7 +884,7 @@ export default function Home() {
     };
     window.addEventListener("keydown", handleKey);
     return () => window.removeEventListener("keydown", handleKey);
-  }, [atoms, formulaOpen, selected, activeMolecule]);
+  }, [atoms, formulaOpen, saveDialogOpen, selected, activeMolecule]);
 
   function addAtom(element: ElementKey, x?: number, y?: number) {
     const id = nextId.current++;
@@ -814,6 +929,106 @@ export default function Home() {
     setFormulaGroups((groups) =>
       groups.filter((group) => !group.atomIds.some((id) => removed.has(id))),
     );
+  }
+
+  function currentCanvasDocument(): CanvasDocument {
+    return {
+      version: 1,
+      savedAt: new Date().toISOString(),
+      atoms,
+      bonds,
+      formulaGroups,
+      view: { pan, scale },
+    };
+  }
+
+  function applyCanvasDocument(document: CanvasDocument) {
+    atomsRef.current = document.atoms;
+    bondsRef.current = document.bonds;
+    setAtoms(document.atoms);
+    setBonds(document.bonds);
+    setFormulaGroups(document.formulaGroups);
+    setPan(document.view.pan);
+    setScale(Math.min(2.5, Math.max(0.25, document.view.scale)));
+    setSelected([]);
+    setSelectedBond(null);
+    setSelectedMolecule(null);
+    setSelectedElectron(null);
+    nextId.current = Math.max(0, ...document.atoms.map((atom) => atom.id)) + 1;
+  }
+
+  async function writeCanvasFile(handle: CanvasFileHandle, contents: string) {
+    const writable = await handle.createWritable();
+    await writable.write(contents);
+    await writable.close();
+  }
+
+  async function saveCanvas(fileName: string) {
+    const serialized = JSON.stringify(currentCanvasDocument(), null, 2);
+    const safeName =
+      fileName
+        .trim()
+        .split("")
+        .map((character) => (character.charCodeAt(0) < 32 ? "-" : character))
+        .join("")
+        .replace(/[<>:"/\\|?*]/g, "-")
+        .replace(/\.electron$/i, "") || "electron-canvas";
+    const picker = (
+      window as Window & {
+        showSaveFilePicker?: (options: {
+          suggestedName: string;
+          types: Array<{
+            description: string;
+            accept: Record<string, string[]>;
+          }>;
+        }) => Promise<CanvasFileHandle>;
+      }
+    ).showSaveFilePicker;
+    try {
+      if (picker) {
+        const handle = await picker({
+          suggestedName: `${safeName}${canvasFileExtension}`,
+          types: [
+            {
+              description: "Electron canvas",
+              accept: { "application/json": [canvasFileExtension] },
+            },
+          ],
+        });
+        await writeCanvasFile(handle, serialized);
+        saveHandleRef.current = handle;
+      } else {
+        const url = URL.createObjectURL(
+          new Blob([serialized], { type: "application/json;charset=utf-8" }),
+        );
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = `${safeName}${canvasFileExtension}`;
+        link.click();
+        URL.revokeObjectURL(url);
+      }
+      setSaveFileName(safeName);
+      setSaveDialogOpen(false);
+      setValidationNotice(
+        "Canvas saved. Drag and drop this file onto the canvas to import it again.",
+      );
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") return;
+      setValidationNotice("The canvas file could not be saved.");
+    }
+  }
+
+  async function importCanvasFile(file: File) {
+    try {
+      const document = parseCanvasDocument(await file.text());
+      applyCanvasDocument(document);
+      defaultCompoundLoaded.current = true;
+      setValidationNotice(`${file.name} imported. Future changes are saved in this browser.`);
+    } catch (error) {
+      setValidationNotice(
+        error instanceof Error ? error.message : "The canvas file could not be imported.",
+      );
+    }
   }
 
   async function spawnFormula(formula: string) {
@@ -1445,6 +1660,12 @@ export default function Home() {
             }}
             onDragOver={(event) => event.preventDefault()}
             onDrop={(event) => {
+              const file = event.dataTransfer.files[0];
+              if (file) {
+                event.preventDefault();
+                void importCanvasFile(file);
+                return;
+              }
               const symbol = event.dataTransfer.getData("element") as ElementKey;
               const box = event.currentTarget.getBoundingClientRect();
               if (symbol in elements)
@@ -1527,8 +1748,8 @@ export default function Home() {
             <div className="bond-toolbar">
               <button
                 type="button"
-                className="structure-lookup"
-                aria-keyshortcuts="Control+P"
+                className="structure-lookup toolbar-action"
+                aria-keyshortcuts="Control+Space"
                 onClick={() => {
                   setFormulaOpen(true);
                   setFormulaError("");
@@ -1537,7 +1758,18 @@ export default function Home() {
               >
                 <MagnifyingGlass /> Add molecule
                 <span className="shortcut-tooltip" role="tooltip">
-                  Shortcut: Ctrl + P
+                  Shortcut: Ctrl + Space
+                </span>
+              </button>
+              <button
+                type="button"
+                className="save-canvas toolbar-action"
+                aria-keyshortcuts="Control+Shift+S"
+                onClick={() => setSaveDialogOpen(true)}
+              >
+                <FloppyDisk /> Save
+                <span className="shortcut-tooltip" role="tooltip">
+                  Save As · Ctrl + Shift + S
                 </span>
               </button>
             </div>
@@ -2307,6 +2539,44 @@ export default function Home() {
                   }),
                 )}
               </div>
+            </dialog>
+          </div>
+        )}
+        {saveDialogOpen && (
+          <div className="formula-command-backdrop" onPointerDown={() => setSaveDialogOpen(false)}>
+            <dialog
+              className="save-dialog"
+              open
+              aria-modal="true"
+              aria-label="Save canvas"
+              onPointerDown={(event) => event.stopPropagation()}
+            >
+              <form
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  void saveCanvas(saveFileName);
+                }}
+              >
+                <label htmlFor="canvas-file-name">File name</label>
+                <div className="save-name-field">
+                  <input
+                    id="canvas-file-name"
+                    autoFocus
+                    value={saveFileName}
+                    onChange={(event) => setSaveFileName(event.target.value)}
+                    spellCheck={false}
+                    autoComplete="off"
+                  />
+                  <span>.electron</span>
+                </div>
+                <p>Choose a location once; changes will autosave to that file.</p>
+                <div className="save-dialog-actions">
+                  <button type="button" onClick={() => setSaveDialogOpen(false)}>
+                    Cancel
+                  </button>
+                  <button type="submit">Choose location</button>
+                </div>
+              </form>
             </dialog>
           </div>
         )}

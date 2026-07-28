@@ -1270,6 +1270,11 @@ button {
   place-items: center;
   padding: 18px;
   background: #000b;
+  animation: menu-backdrop-in 180ms cubic-bezier(0.25, 1, 0.5, 1) both;
+}
+.formula-command-backdrop.is-closing {
+  pointer-events: none;
+  animation: menu-backdrop-out 150ms cubic-bezier(0.4, 0, 1, 1) both;
 }
 .save-dialog {
   position: absolute;
@@ -1285,6 +1290,10 @@ button {
   background: #11111b;
   color: var(--text);
   box-shadow: 0 24px 70px #000b;
+  animation: command-menu-in 220ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+.formula-command-backdrop.is-closing .save-dialog {
+  animation: command-menu-out 150ms cubic-bezier(0.4, 0, 1, 1) both;
 }
 .save-dialog form {
   display: grid;
@@ -1370,6 +1379,10 @@ button {
   border-radius: 10px;
   background: #11111b;
   box-shadow: 0 24px 70px #000b;
+  animation: command-menu-in 220ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+.formula-command-backdrop.is-closing .formula-command {
+  animation: command-menu-out 150ms cubic-bezier(0.4, 0, 1, 1) both;
 }
 .formula-command form {
   display: grid;
@@ -1498,6 +1511,11 @@ button {
   place-items: center;
   padding: 18px;
   background: #050806c7;
+  animation: menu-backdrop-in 180ms cubic-bezier(0.25, 1, 0.5, 1) both;
+}
+.periodic-backdrop.is-closing {
+  pointer-events: none;
+  animation: menu-backdrop-out 150ms cubic-bezier(0.4, 0, 1, 1) both;
 }
 .periodic-panel {
   position: absolute;
@@ -1514,6 +1532,10 @@ button {
   border-radius: 12px;
   background: #0b0b12;
   box-shadow: 0 28px 80px #000d;
+  animation: periodic-menu-in 240ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+.periodic-backdrop.is-closing .periodic-panel {
+  animation: periodic-menu-out 150ms cubic-bezier(0.4, 0, 1, 1) both;
 }
 .periodic-panel > header {
   position: sticky;
@@ -1641,6 +1663,40 @@ button {
 .periodic-grid button.f-block {
   background: #181820;
   border-color: #403c4c;
+}
+@keyframes menu-backdrop-in {
+  from {
+    opacity: 0;
+  }
+}
+@keyframes menu-backdrop-out {
+  to {
+    opacity: 0;
+  }
+}
+@keyframes command-menu-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, -53%) scale(0.975);
+  }
+}
+@keyframes command-menu-out {
+  to {
+    opacity: 0;
+    transform: translate(-50%, -54%) scale(0.985);
+  }
+}
+@keyframes periodic-menu-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, -48%) scale(0.985);
+  }
+}
+@keyframes periodic-menu-out {
+  to {
+    opacity: 0;
+    transform: translate(-50%, -49%) scale(0.99);
+  }
 }
 .bond-contributors {
   display: flex;
@@ -1772,6 +1828,8 @@ button {
   *,
   *::before,
   *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
     scroll-behavior: auto !important;
   }

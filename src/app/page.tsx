@@ -51,6 +51,29 @@ type CanvasFileHandle = {
 const canvasStorageKey = "electron.canvas.v1";
 const canvasFileExtension = ".electron";
 
+function useAnimatedPresence(open: boolean, exitDuration = 150) {
+  const [mounted, setMounted] = useState(open);
+  const [closing, setClosing] = useState(false);
+
+  useEffect(() => {
+    if (open) {
+      setMounted(true);
+      setClosing(false);
+      return;
+    }
+    if (!mounted) return;
+
+    setClosing(true);
+    const timeout = window.setTimeout(() => {
+      setMounted(false);
+      setClosing(false);
+    }, exitDuration);
+    return () => window.clearTimeout(timeout);
+  }, [exitDuration, mounted, open]);
+
+  return { mounted, closing };
+}
+
 function parseCanvasDocument(contents: string): CanvasDocument {
   const candidate = JSON.parse(contents) as Partial<CanvasDocument>;
   if (
@@ -444,6 +467,9 @@ export default function Home() {
   const [saveFileName, setSaveFileName] = useState("electron-canvas");
   const [sidebarWidths, setSidebarWidths] = useState({ left: 228, right: 336 });
   const [periodicOpen, setPeriodicOpen] = useState(false);
+  const periodicPresence = useAnimatedPresence(periodicOpen);
+  const saveDialogPresence = useAnimatedPresence(saveDialogOpen);
+  const formulaPresence = useAnimatedPresence(formulaOpen);
   const [valenceFilter, setValenceFilter] = useState("all");
   const [characterFilter, setCharacterFilter] = useState("all");
   const [formulaGroups, setFormulaGroups] = useState<FormulaGroup[]>([]);
@@ -2430,8 +2456,11 @@ export default function Home() {
             }}
           />
         </div>
-        {periodicOpen && (
-          <div className="periodic-backdrop" onPointerDown={() => setPeriodicOpen(false)}>
+        {periodicPresence.mounted && (
+          <div
+            className={`periodic-backdrop ${periodicPresence.closing ? "is-closing" : ""}`}
+            onPointerDown={() => setPeriodicOpen(false)}
+          >
             <dialog
               className="periodic-panel"
               open
@@ -2546,8 +2575,11 @@ export default function Home() {
             </dialog>
           </div>
         )}
-        {saveDialogOpen && (
-          <div className="formula-command-backdrop" onPointerDown={() => setSaveDialogOpen(false)}>
+        {saveDialogPresence.mounted && (
+          <div
+            className={`formula-command-backdrop ${saveDialogPresence.closing ? "is-closing" : ""}`}
+            onPointerDown={() => setSaveDialogOpen(false)}
+          >
             <dialog
               className="save-dialog"
               open
@@ -2584,9 +2616,9 @@ export default function Home() {
             </dialog>
           </div>
         )}
-        {formulaOpen && (
+        {formulaPresence.mounted && (
           <div
-            className="formula-command-backdrop"
+            className={`formula-command-backdrop ${formulaPresence.closing ? "is-closing" : ""}`}
             onPointerDown={() => {
               if (!formulaLoading) setFormulaOpen(false);
             }}

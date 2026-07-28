@@ -849,9 +849,13 @@ export default function Home() {
         target.isContentEditable;
       if (event.ctrlKey && !event.shiftKey && event.code === "Space") {
         event.preventDefault();
-        setFormulaOpen(true);
-        setFormulaError("");
-        setFormulaCandidates([]);
+        if (formulaOpen) {
+          setFormulaOpen(false);
+        } else {
+          setFormulaOpen(true);
+          setFormulaError("");
+          setFormulaCandidates([]);
+        }
         return;
       }
       if (event.ctrlKey && event.shiftKey && event.key.toLowerCase() === "s") {

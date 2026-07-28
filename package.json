@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev"
+    "dev": "bun run devops/copy-rdkit.ts && next dev"
   },
   "dependencies": {
     "@exabyte-io/periodic-table.js": "2023.12.23-3",

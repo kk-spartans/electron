@@ -48,7 +48,6 @@ type CanvasFileHandle = {
   }>;
 };
 
-const canvasStorageKey = "electron.canvas.v1";
 const canvasFileExtension = ".electron";
 
 function useAnimatedPresence(open: boolean, exitDuration = 150) {
@@ -481,12 +480,10 @@ export default function Home() {
     endX: number;
     endY: number;
   } | null>(null);
-  const [persistenceReady, setPersistenceReady] = useState(false);
   const [boot, setBoot] = useState({ progress: 0, ready: false, error: "" });
   const nextId = useRef(1);
   const defaultCompoundLoaded = useRef(false);
   const spawnFormulaRef = useRef<(formula: string) => Promise<void>>(async () => {});
-  const saveHandleRef = useRef<CanvasFileHandle | null>(null);
   const validationSequence = useRef(0);
   const formulaSpawnCount = useRef(0);
   const canvasRef = useRef<HTMLElement>(null);
@@ -611,19 +608,6 @@ export default function Home() {
     spawnFormulaRef.current = spawnFormula;
   });
   useEffect(() => {
-    try {
-      const stored = localStorage.getItem(canvasStorageKey);
-      if (stored) {
-        applyCanvasDocument(parseCanvasDocument(stored));
-        defaultCompoundLoaded.current = true;
-      }
-    } catch {
-      localStorage.removeItem(canvasStorageKey);
-    } finally {
-      setPersistenceReady(true);
-    }
-  }, []);
-  useEffect(() => {
     let active = true;
     loadRDKit((progress) => {
       if (active) setBoot({ progress, ready: false, error: "" });
@@ -644,31 +628,15 @@ export default function Home() {
     };
   }, []);
   useEffect(() => {
-    if (!boot.ready || !persistenceReady || defaultCompoundLoaded.current) return;
+    if (!boot.ready || defaultCompoundLoaded.current) return;
     defaultCompoundLoaded.current = true;
     void spawnFormulaRef.current("fentanyl");
-  }, [boot.ready, persistenceReady]);
+  }, [boot.ready]);
   useEffect(() => {
-    if (!persistenceReady) return;
-    const timeout = window.setTimeout(() => {
-      const serialized = JSON.stringify({
-        version: 1,
-        savedAt: new Date().toISOString(),
-        atoms,
-        bonds,
-        formulaGroups,
-        view: { pan, scale },
-      } satisfies CanvasDocument);
-      localStorage.setItem(canvasStorageKey, serialized);
-      const handle = saveHandleRef.current;
-      if (handle)
-        void writeCanvasFile(handle, serialized).catch(() => {
-          saveHandleRef.current = null;
-          setValidationNotice("Autosave stopped because the selected file is unavailable.");
-        });
-    }, 350);
+    if (!validationNotice) return;
+    const timeout = window.setTimeout(() => setValidationNotice(""), 4200);
     return () => window.clearTimeout(timeout);
-  }, [atoms, bonds, formulaGroups, pan, persistenceReady, scale]);
+  }, [validationNotice]);
 
   const namedCompounds = useMemo(() => {
     const adjacency = new Map<number, number[]>();
@@ -1026,7 +994,6 @@ export default function Home() {
           ],
         });
         await writeCanvasFile(handle, serialized);
-        saveHandleRef.current = handle;
       } else {
         const url = URL.createObjectURL(
           new Blob([serialized], { type: "application/json;charset=utf-8" }),
@@ -1040,7 +1007,9 @@ export default function Home() {
       setSaveFileName(safeName);
       setSaveDialogOpen(false);
       setValidationNotice(
-        "Canvas saved. Drag and drop this file onto the canvas to import it again.",
+        picker
+          ? `Canvas saved to ${safeName}${canvasFileExtension}.`
+          : `Downloaded ${safeName}${canvasFileExtension}.`,
       );
     } catch (error) {
       if (error instanceof DOMException && error.name === "AbortError") return;
@@ -1053,7 +1022,7 @@ export default function Home() {
       const document = parseCanvasDocument(await file.text());
       applyCanvasDocument(document);
       defaultCompoundLoaded.current = true;
-      setValidationNotice(`${file.name} imported. Future changes are saved in this browser.`);
+      setValidationNotice(`${file.name} imported.`);
     } catch (error) {
       setValidationNotice(
         error instanceof Error ? error.message : "The canvas file could not be imported.",
@@ -1384,7 +1353,6 @@ export default function Home() {
       if (sequence !== validationSequence.current) return false;
       if (!result.valid) {
         setValidationNotice(result.reason ?? "RDKit rejected that bonding arrangement.");
-        window.setTimeout(() => setValidationNotice(""), 4200);
         return false;
       }
       setValidationNotice("");
@@ -1396,7 +1364,6 @@ export default function Home() {
     } catch {
       if (sequence === validationSequence.current) {
         setValidationNotice("RDKit validation is unavailable, so no bond was changed.");
-        window.setTimeout(() => setValidationNotice(""), 4200);
       }
       return false;
     }
@@ -1818,7 +1785,11 @@ export default function Home() {
                 }}
               />
             )}
-            {validationNotice && <output className="validation-notice">{validationNotice}</output>}
+            {validationNotice && (
+              <output className="validation-notice" role="status">
+                {validationNotice}
+              </output>
+            )}
             <div
               className="canvas-world"
               style={{ transform: `translate3d(${pan.x}px, ${pan.y}px, 0)` }}
@@ -2605,12 +2576,12 @@ export default function Home() {
                   />
                   <span>.electron</span>
                 </div>
-                <p>Choose a location once; changes will autosave to that file.</p>
+                <p>Save a .electron copy that you can import later.</p>
                 <div className="save-dialog-actions">
                   <button type="button" onClick={() => setSaveDialogOpen(false)}>
                     Cancel
                   </button>
-                  <button type="submit">Choose location</button>
+                  <button type="submit">Save canvas</button>
                 </div>
               </form>
             </dialog>

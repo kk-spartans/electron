@@ -1744,6 +1744,10 @@ button {
     position: relative;
   }
   .element-tray {
+    display: grid;
+    grid-template-columns: 150px minmax(0, 1fr);
+    grid-template-rows: auto auto;
+    gap: 8px;
     border: 0;
     border-bottom: 1px solid var(--line);
     padding: 6px 9px;
@@ -1754,18 +1758,25 @@ button {
     display: none;
   }
   .element-search {
-    width: 150px;
-    margin: 0 6px 0 0;
-    float: left;
+    width: auto;
+    margin: 0;
+    float: none;
+  }
+  .open-periodic {
+    grid-column: 1 / -1;
+    margin: 0;
   }
   .element-palette {
     display: flex;
     gap: 2px;
-    overflow: hidden;
-    height: 34px;
+    height: 40px;
+    overflow-x: auto;
+    overflow-y: hidden;
+    overscroll-behavior-x: contain;
   }
   .element-palette button {
-    min-width: 42px;
+    min-width: 44px;
+    min-height: 40px;
     display: flex;
     justify-content: center;
     gap: 3px;

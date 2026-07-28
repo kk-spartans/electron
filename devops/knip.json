@@ -4,6 +4,10 @@
   "project": ["src/**/*.{ts,tsx,css}", "devops/*.ts"],
   "ignoreDependencies": [
     "@e18e/cli",
+    "@semantic-release/changelog",
+    "@semantic-release/git",
+    "@semantic-release/github",
+    "@semantic-release/npm",
     "react-doctor",
     "tailwindcss",
     "oxfmt",

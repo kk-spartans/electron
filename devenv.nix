@@ -54,5 +54,6 @@ in
   tasks = {
     "electron:check".exec = "bun run devops/check.ts";
     "electron:dev".exec = "bun run dev";
+    "electron:release".exec = "bun run release";
   };
 }

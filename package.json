@@ -1,9 +1,10 @@
 {
   "name": "electron",
   "version": "0.1.0",
-  "private": true,
+  "private": false,
   "scripts": {
-    "dev": "bun run devops/copy-rdkit.ts && next dev"
+    "dev": "bun run devops/copy-rdkit.ts && next dev",
+    "release": "semantic-release --extends ./devops/semantic-release.json"
   },
   "dependencies": {
     "@exabyte-io/periodic-table.js": "2023.12.23-3",
@@ -15,6 +16,10 @@
   },
   "devDependencies": {
     "@e18e/cli": "^0.7.0",
+    "@semantic-release/changelog": "^6.0.3",
+    "@semantic-release/git": "^10.0.1",
+    "@semantic-release/github": "^12.0.8",
+    "@semantic-release/npm": "^13.1.5",
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
     "@types/react": "^19",
@@ -25,6 +30,7 @@
     "oxlint": "^1.74.0",
     "oxlint-tsgolint": "^7.0.2001",
     "react-doctor": "^0.9.1",
+    "semantic-release": "^25.0.5",
     "tailwindcss": "^4",
     "typescript": "^5"
   },

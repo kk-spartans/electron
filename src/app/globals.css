@@ -507,6 +507,17 @@ button {
     0 12px 34px #000a,
     0 0 0 5px #89b4fa16;
   cursor: pointer;
+  z-index: 4;
+  touch-action: none;
+}
+.compressed-compound:hover,
+.compressed-compound:focus-visible,
+.compressed-compound.selected {
+  border-color: #a6e3a1;
+  outline: none;
+  box-shadow:
+    0 12px 34px #000a,
+    0 0 0 6px #a6e3a126;
 }
 .compressed-compound b {
   font: 700 15px var(--font-geist-mono);

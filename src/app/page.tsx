@@ -65,6 +65,13 @@ type PreparedReaction = {
   center: { x: number; y: number };
 };
 
+type HistorySnapshot = {
+  atoms: AtomNode[];
+  bonds: BondEdge[];
+  formulaGroups: FormulaGroup[];
+  compressedGroupIds: number[];
+};
+
 type CanvasDocument = {
   version: 1;
   savedAt: string;
@@ -81,6 +88,10 @@ type CanvasFileHandle = {
 };
 
 const canvasFileExtension = ".electron";
+
+function sameHistorySnapshot(first: HistorySnapshot, second: HistorySnapshot) {
+  return JSON.stringify(first) === JSON.stringify(second);
+}
 
 function useAnimatedPresence(open: boolean, exitDuration = 150) {
   const [mounted, setMounted] = useState(open);
@@ -506,6 +517,13 @@ export default function Home() {
   const canvasRef = useRef<HTMLElement>(null);
   const atomsRef = useRef(atoms);
   const bondsRef = useRef(bonds);
+  const formulaGroupsRef = useRef(formulaGroups);
+  const compressedGroupsRef = useRef(compressedGroups);
+  const historyCurrent = useRef<HistorySnapshot | null>(null);
+  const undoStack = useRef<HistorySnapshot[]>([]);
+  const redoStack = useRef<HistorySnapshot[]>([]);
+  const historyTimer = useRef<number | null>(null);
+  const applyingHistory = useRef(false);
   const geometryAnimation = useRef<number | null>(null);
   const gesture = useRef<
     | { type: "pan"; sx: number; sy: number; ox: number; oy: number }
@@ -622,6 +640,36 @@ export default function Home() {
     bondsRef.current = bonds;
   }, [bonds]);
   useEffect(() => {
+    formulaGroupsRef.current = formulaGroups;
+  }, [formulaGroups]);
+  useEffect(() => {
+    compressedGroupsRef.current = compressedGroups;
+  }, [compressedGroups]);
+  useEffect(() => {
+    if (applyingHistory.current) {
+      applyingHistory.current = false;
+      return;
+    }
+    const immediate = captureHistorySnapshot();
+    if (!historyCurrent.current) {
+      historyCurrent.current = immediate;
+      return;
+    }
+    if (historyTimer.current) window.clearTimeout(historyTimer.current);
+    historyTimer.current = window.setTimeout(() => {
+      const snapshot = captureHistorySnapshot();
+      if (!historyCurrent.current) return;
+      if (sameHistorySnapshot(historyCurrent.current, snapshot)) return;
+      undoStack.current.push(historyCurrent.current);
+      if (undoStack.current.length > 100) undoStack.current.shift();
+      historyCurrent.current = snapshot;
+      redoStack.current = [];
+    }, 220);
+    return () => {
+      if (historyTimer.current) window.clearTimeout(historyTimer.current);
+    };
+  }, [atoms, bonds, formulaGroups, compressedGroups]);
+  useEffect(() => {
     spawnFormulaRef.current = spawnFormula;
   });
   useEffect(() => {
@@ -711,11 +759,7 @@ export default function Home() {
       ];
     });
     const singles = atoms
-      .filter(
-        (atom) =>
-          !claimed.has(atom.id) &&
-          !bonds.some((bond) => bond.from === atom.id || bond.to === atom.id),
-      )
+      .filter((atom) => !claimed.has(atom.id))
       .map((atom) => ({
         id: -1_000_000 - atom.id,
         formula: atom.element,
@@ -725,7 +769,7 @@ export default function Home() {
         name: elements[atom.element].name,
       }));
     return [...groups, ...known, ...singles];
-  }, [atomById, atoms, bonds, formulaGroups, namedCompounds]);
+  }, [atomById, atoms, formulaGroups, namedCompounds]);
 
   const nearbyReactantPairs = useMemo(() => {
     const pairs: Array<{
@@ -908,6 +952,70 @@ export default function Home() {
     return () => canvas.removeEventListener("wheel", handleWheel);
   }, [pan, scale]);
 
+  function captureHistorySnapshot(): HistorySnapshot {
+    return structuredClone({
+      atoms: atomsRef.current,
+      bonds: bondsRef.current,
+      formulaGroups: formulaGroupsRef.current,
+      compressedGroupIds: [...compressedGroupsRef.current],
+    });
+  }
+
+  function applyHistorySnapshot(snapshot: HistorySnapshot) {
+    const restored = structuredClone(snapshot);
+    applyingHistory.current = true;
+    atomsRef.current = restored.atoms;
+    bondsRef.current = restored.bonds;
+    formulaGroupsRef.current = restored.formulaGroups;
+    compressedGroupsRef.current = new Set(restored.compressedGroupIds);
+    setAtoms(restored.atoms);
+    setBonds(restored.bonds);
+    setFormulaGroups(restored.formulaGroups);
+    setCompressedGroups(compressedGroupsRef.current);
+    setSelected([]);
+    setSelectedBond(null);
+    setSelectedMolecule(null);
+    setSelectedElectron(null);
+    setPreparedReaction(null);
+    nextId.current = Math.max(0, ...restored.atoms.map((atom) => atom.id)) + 1;
+  }
+
+  function flushPendingHistory() {
+    if (historyTimer.current) {
+      window.clearTimeout(historyTimer.current);
+      historyTimer.current = null;
+    }
+    const snapshot = captureHistorySnapshot();
+    if (!historyCurrent.current) {
+      historyCurrent.current = snapshot;
+      return snapshot;
+    }
+    if (!sameHistorySnapshot(historyCurrent.current, snapshot)) {
+      undoStack.current.push(historyCurrent.current);
+      historyCurrent.current = snapshot;
+      redoStack.current = [];
+    }
+    return snapshot;
+  }
+
+  function undo() {
+    const current = flushPendingHistory();
+    const previous = undoStack.current.pop();
+    if (!previous) return;
+    redoStack.current.push(current);
+    historyCurrent.current = previous;
+    applyHistorySnapshot(previous);
+  }
+
+  function redo() {
+    const current = flushPendingHistory();
+    const next = redoStack.current.pop();
+    if (!next) return;
+    undoStack.current.push(current);
+    historyCurrent.current = next;
+    applyHistorySnapshot(next);
+  }
+
   useEffect(() => {
     const handleKey = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement;
@@ -915,6 +1023,12 @@ export default function Home() {
         target instanceof HTMLInputElement ||
         target instanceof HTMLTextAreaElement ||
         target.isContentEditable;
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "z" && !isField) {
+        event.preventDefault();
+        if (event.shiftKey) redo();
+        else undo();
+        return;
+      }
       if (event.ctrlKey && !event.shiftKey && event.code === "Space") {
         event.preventDefault();
         if (formulaOpen) {
@@ -956,7 +1070,16 @@ export default function Home() {
     };
     window.addEventListener("keydown", handleKey);
     return () => window.removeEventListener("keydown", handleKey);
-  }, [atoms, formulaOpen, saveDialogOpen, selected, activeMolecule]);
+  }, [
+    atoms,
+    formulaOpen,
+    saveDialogOpen,
+    selected,
+    activeMolecule,
+    bonds,
+    formulaGroups,
+    compressedGroups,
+  ]);
 
   function addAtom(element: ElementKey, x?: number, y?: number) {
     const id = nextId.current++;
@@ -1812,7 +1935,7 @@ export default function Home() {
               const target = event.target as Element;
               if (
                 !target.closest(
-                  ".canvas-atom, .canvas-atom-controls, .bond-toolbar, .bond-target, .compound-label",
+                  ".canvas-atom, .canvas-atom-controls, .bond-toolbar, .bond-target, .compound-label, .compressed-compound",
                 )
               ) {
                 event.currentTarget.setPointerCapture(event.pointerId);
@@ -1852,18 +1975,42 @@ export default function Home() {
                   maxX = Math.max(current.sx, event.clientX) - box.left,
                   minY = Math.min(current.sy, event.clientY) - box.top,
                   maxY = Math.max(current.sy, event.clientY) - box.top,
-                  matches = atoms
+                  atomMatches = atoms
                     .filter((atom) => {
                       const x = pan.x + atom.x * scale,
                         y = pan.y + atom.y * scale;
                       return x >= minX && x <= maxX && y >= minY && y <= maxY;
                     })
-                    .map((atom) => atom.id);
+                    .map((atom) => atom.id),
+                  compressedMatches = formulaGroups.filter((group) => {
+                    if (!compressedGroups.has(group.id)) return false;
+                    const members = group.atomIds
+                      .map((id) => atomById.get(id))
+                      .filter((atom): atom is AtomNode => Boolean(atom));
+                    if (!members.length) return false;
+                    const x =
+                        pan.x +
+                        (members.reduce((sum, atom) => sum + atom.x, 0) / members.length) * scale,
+                      y =
+                        pan.y +
+                        (members.reduce((sum, atom) => sum + atom.y, 0) / members.length) * scale;
+                    return x >= minX && x <= maxX && y >= minY && y <= maxY;
+                  }),
+                  matches = [
+                    ...new Set([
+                      ...atomMatches,
+                      ...compressedMatches.flatMap((group) => group.atomIds),
+                    ]),
+                  ];
                 setSelected((existing) =>
                   current.additive ? [...new Set([...existing, ...matches])] : matches,
                 );
                 setSelectedBond(null);
-                setSelectedMolecule(null);
+                setSelectedMolecule(
+                  !current.additive && compressedMatches.length === 1
+                    ? compressedMatches[0].id
+                    : null,
+                );
                 setSelectedElectron(null);
               }
               gesture.current = null;
@@ -2224,14 +2371,33 @@ export default function Home() {
                   return (
                     <button
                       type="button"
-                      className="compressed-compound"
+                      className={`compressed-compound${selectedMolecule === group.id ? " selected" : ""}`}
                       key={`compressed-${group.id}`}
                       style={{ transform: `translate(${x * scale - 46}px,${y * scale - 46}px)` }}
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        selectCompound(group.id, group.atomIds);
+                      onPointerDown={(event) => {
+                        beginCompoundDrag(event, group.id, group.atomIds);
                       }}
-                      aria-label={`Expand or inspect ${group.formula}`}
+                      onPointerMove={pointerMove}
+                      onPointerUp={() => {
+                        gesture.current = null;
+                      }}
+                      onPointerCancel={() => {
+                        gesture.current = null;
+                      }}
+                      onLostPointerCapture={() => {
+                        gesture.current = null;
+                      }}
+                      onDoubleClick={(event) => {
+                        event.stopPropagation();
+                        toggleCompressed(group.id);
+                      }}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter" || event.key === " ") {
+                          event.preventDefault();
+                          selectCompound(group.id, group.atomIds, event.shiftKey);
+                        }
+                      }}
+                      aria-label={`Select ${group.formula}; double click to expand`}
                     >
                       <b>{group.formula}</b>
                       <span>{group.name ?? "compound"}</span>

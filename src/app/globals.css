@@ -429,30 +429,61 @@ button {
   left: 50%;
   transform: translateX(-50%);
   display: flex;
-  align-items: center;
-  gap: 14px;
+  align-items: stretch;
+  gap: 10px;
+  width: min(620px, calc(100% - 28px));
+  max-height: min(430px, calc(100% - 100px));
+  overflow: auto;
   padding: 9px 10px 9px 13px;
   border: 1px solid #89b4fa66;
   border-radius: 10px;
   background: #11111bf2;
   box-shadow: 0 16px 42px #000a;
 }
-.reaction-prompt span {
+.reaction-prompt header {
   display: grid;
   gap: 2px;
 }
-.reaction-prompt small {
+.reaction-prompt header small {
   color: var(--muted);
   font-size: 9px;
   text-transform: uppercase;
   letter-spacing: 0.06em;
 }
-.reaction-prompt b {
+.reaction-prompt header strong {
+  color: #cdd6f4;
+  font-size: 12px;
+}
+.reaction-options {
+  display: grid;
+  gap: 7px;
+}
+.reaction-options article {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 9px;
+  border: 1px solid #313244;
+  border-radius: 8px;
+  background: #181825;
+}
+.reaction-options article span {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+}
+.reaction-options b {
   color: #cdd6f4;
   font: 11px var(--font-geist-mono);
-  white-space: nowrap;
 }
-.reaction-prompt button {
+.reaction-options article small {
+  color: var(--muted);
+  font-size: 9px;
+  line-height: 1.4;
+}
+.reaction-options button {
+  flex: none;
   border: 0;
   border-radius: 7px;
   padding: 8px 13px;

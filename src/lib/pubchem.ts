@@ -104,7 +104,20 @@ export async function lookupCompoundFacts(cid: number): Promise<CompoundFacts> {
       ).slice(0, 3),
       reactivity: unique(
         strings.filter((item) => /reactiv|reaction/i.test(item.path)).map((item) => item.text),
-      ).slice(0, 3),
+      )
+        .filter(
+          (text) =>
+            text.length >= 20 &&
+            !/^https?:/i.test(text) &&
+            !/^(stability and reactivity|reactivity profile)$/i.test(text),
+        )
+        .sort(
+          (first, second) =>
+            Number(/reacts? with|to form|forming|produces?|releases?|decomposes?/i.test(second)) -
+              Number(/reacts? with|to form|forming|produces?|releases?|decomposes?/i.test(first)) ||
+            first.length - second.length,
+        )
+        .slice(0, 30),
     };
   } catch {
     return { ph: [], reactivity: [] };

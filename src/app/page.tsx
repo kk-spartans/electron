@@ -43,8 +43,26 @@ type FormulaGroup = {
 
 type ReactionRecipe = {
   reactants: Array<{ formula: string; coefficient: number }>;
-  products: Array<{ formula: string; coefficient: number }>;
+  products: Array<{ formula: string; coefficient: number; cid: number }>;
   name: string;
+  condition: string;
+};
+
+type MoleculeEntity = {
+  id: number;
+  formula: string;
+  atomIds: number[];
+  x: number;
+  y: number;
+  cid?: number;
+  name?: string;
+};
+
+type PreparedReaction = {
+  key: string;
+  recipe: ReactionRecipe;
+  atomIds: number[];
+  center: { x: number; y: number };
 };
 
 type CanvasDocument = {
@@ -461,11 +479,12 @@ export default function Home() {
   const [formulaGroups, setFormulaGroups] = useState<FormulaGroup[]>([]);
   const [selectedMolecule, setSelectedMolecule] = useState<number | null>(null);
   const [compressedGroups, setCompressedGroups] = useState<Set<number>>(() => new Set());
-  const [balancedReaction, setBalancedReaction] = useState("");
-  const [discoveredReaction, setDiscoveredReaction] = useState<{
-    recipe: ReactionRecipe;
-    entityIds: [number, number];
+  const [reactionChoices, setReactionChoices] = useState<ReactionRecipe[]>([]);
+  const reactionPairRef = useRef<{
+    first: MoleculeEntity;
+    second: MoleculeEntity;
   } | null>(null);
+  const [preparedReaction, setPreparedReaction] = useState<PreparedReaction | null>(null);
   const [validationNotice, setValidationNotice] = useState("");
   const [selectionBox, setSelectionBox] = useState<{
     startX: number;
@@ -476,7 +495,12 @@ export default function Home() {
   const [boot, setBoot] = useState({ progress: 0, ready: false, error: "" });
   const nextId = useRef(1);
   const defaultCompoundLoaded = useRef(false);
-  const spawnFormulaRef = useRef<(formula: string) => Promise<void>>(async () => {});
+  const spawnFormulaRef = useRef<
+    (
+      formula: string,
+      options?: { center?: { x: number; y: number }; preserveView?: boolean; select?: boolean },
+    ) => Promise<FormulaGroup | undefined>
+  >(async () => undefined);
   const validationSequence = useRef(0);
   const formulaSpawnCount = useRef(0);
   const canvasRef = useRef<HTMLElement>(null);
@@ -668,6 +692,8 @@ export default function Home() {
           atomIds: group.atomIds,
           x: members.reduce((sum, atom) => sum + atom.x, 0) / members.length,
           y: members.reduce((sum, atom) => sum + atom.y, 0) / members.length,
+          cid: group.cid,
+          name: group.name,
         },
       ];
     });
@@ -696,82 +722,49 @@ export default function Home() {
         atomIds: [atom.id],
         x: atom.x,
         y: atom.y,
+        name: elements[atom.element].name,
       }));
     return [...groups, ...known, ...singles];
   }, [atomById, atoms, bonds, formulaGroups, namedCompounds]);
 
-  const nearbyReactants = useMemo(() => {
+  const nearbyReactantPairs = useMemo(() => {
+    const pairs: Array<{
+      first: MoleculeEntity;
+      second: MoleculeEntity;
+      distance: number;
+    }> = [];
     for (let firstIndex = 0; firstIndex < moleculeEntities.length; firstIndex++) {
       for (let secondIndex = firstIndex + 1; secondIndex < moleculeEntities.length; secondIndex++) {
         const first = moleculeEntities[firstIndex],
-          second = moleculeEntities[secondIndex];
-        if (Math.hypot(first.x - second.x, first.y - second.y) > 620) continue;
-        return { first, second };
+          second = moleculeEntities[secondIndex],
+          distance = Math.hypot(first.x - second.x, first.y - second.y);
+        if (distance <= 620) pairs.push({ first, second, distance });
       }
     }
-    return null;
+    return pairs.sort((first, second) => first.distance - second.distance);
   }, [moleculeEntities]);
 
   useEffect(() => {
     let current = true;
-    setDiscoveredReaction(null);
-    if (!nearbyReactants) return;
+    setReactionChoices([]);
+    reactionPairRef.current = null;
+    if (!nearbyReactantPairs.length || preparedReaction) return;
     const discover = async () => {
-      const firstCounts = formulaCounts(nearbyReactants.first.formula);
-      const secondCounts = formulaCounts(nearbyReactants.second.formula);
-      for (let firstCoefficient = 1; firstCoefficient <= 3; firstCoefficient++)
-        for (let secondCoefficient = 1; secondCoefficient <= 3; secondCoefficient++) {
-          const combined = mergeFormulaCounts(
-            firstCounts,
-            secondCounts,
-            firstCoefficient,
-            secondCoefficient,
-          );
-          const divisor = gcdAll(Object.values(combined));
-          const productCoefficient = divisor;
-          const productFormula = countsFormula(
-            Object.fromEntries(
-              Object.entries(combined).map(([symbol, count]) => [symbol, count / divisor]),
-            ),
-          );
-          const result = await lookupStructure(productFormula);
-          if (!current) return;
-          if (!result.record) continue;
-          setDiscoveredReaction({
-            entityIds: [nearbyReactants.first.id, nearbyReactants.second.id],
-            recipe: {
-              reactants: [
-                { formula: nearbyReactants.first.formula, coefficient: firstCoefficient },
-                { formula: nearbyReactants.second.formula, coefficient: secondCoefficient },
-              ],
-              products: [{ formula: result.record.formula, coefficient: productCoefficient }],
-              name: `${result.record.name} formation · PubChem`,
-            },
-          });
+      for (const pair of nearbyReactantPairs) {
+        const routes = await discoverReactionChoices(pair.first, pair.second);
+        if (!current) return;
+        if (routes.length) {
+          reactionPairRef.current = pair;
+          setReactionChoices(routes);
           return;
         }
+      }
     };
     void discover();
     return () => {
       current = false;
     };
-  }, [nearbyReactants]);
-
-  const reactionOpportunity = useMemo(() => {
-    if (!nearbyReactants || !discoveredReaction) return null;
-    const ids = [nearbyReactants.first.id, nearbyReactants.second.id] as [number, number];
-    if (!ids.every((id) => discoveredReaction.entityIds.includes(id))) return null;
-    const recipe = discoveredReaction.recipe;
-    const key = `${recipe.products[0].formula}:${[...ids].sort((a, b) => a - b).join(":")}`;
-    return {
-      recipe,
-      first: nearbyReactants.first,
-      second: nearbyReactants.second,
-      key,
-      balanced:
-        recipe.reactants.every((item) => item.coefficient === 1) || balancedReaction === key,
-    };
-  }, [balancedReaction, discoveredReaction, nearbyReactants]);
+  }, [nearbyReactantPairs, preparedReaction]);
 
   const compressedAtomIds = useMemo(
     () =>
@@ -1010,18 +1003,83 @@ export default function Home() {
     );
   }
 
-  async function runReaction() {
-    if (!reactionOpportunity) return;
-    const removedIds = [
-      ...reactionOpportunity.first.atomIds,
-      ...reactionOpportunity.second.atomIds,
-    ];
-    deleteAtoms(removedIds);
-    setBalancedReaction("");
-    setValidationNotice(`Reacted: ${reactionEquation(reactionOpportunity.recipe)}`);
-    for (const product of reactionOpportunity.recipe.products)
+  function cloneEntity(entity: MoleculeEntity, copyIndex: number) {
+    const sourceIds = new Set(entity.atomIds);
+    const sourceAtoms = atomsRef.current.filter((atom) => sourceIds.has(atom.id));
+    const idMap = new Map<number, number>();
+    const angle = copyIndex * 2.4;
+    const offset = { x: Math.cos(angle) * 270, y: Math.sin(angle) * 270 };
+    const createdAtoms = sourceAtoms.map((atom) => {
+      const id = nextId.current++;
+      idMap.set(atom.id, id);
+      return { ...atom, id, x: atom.x + offset.x, y: atom.y + offset.y };
+    });
+    const createdBonds = bondsRef.current
+      .filter((bond) => sourceIds.has(bond.from) && sourceIds.has(bond.to))
+      .map((bond, index) => ({
+        ...bond,
+        id: Date.now() + copyIndex * 100 + index,
+        from: idMap.get(bond.from)!,
+        to: idMap.get(bond.to)!,
+      }));
+    atomsRef.current = [...atomsRef.current, ...createdAtoms];
+    bondsRef.current = [...bondsRef.current, ...createdBonds];
+    setAtoms(atomsRef.current);
+    setBonds(bondsRef.current);
+    const sourceGroup = formulaGroups.find((group) => group.id === entity.id);
+    if (sourceGroup) {
+      const copyGroup: FormulaGroup = {
+        ...sourceGroup,
+        id: Date.now() + copyIndex * 1000,
+        atomIds: createdAtoms.map((atom) => atom.id),
+        source: "balanced copy",
+      };
+      setFormulaGroups((groups) => [...groups, copyGroup]);
+    }
+    return createdAtoms.map((atom) => atom.id);
+  }
+
+  function prepareReaction(recipe: ReactionRecipe) {
+    const reactionPair = reactionPairRef.current;
+    if (!reactionPair) return;
+    const entities = [reactionPair.first, reactionPair.second];
+    const atomIds = entities.flatMap((entity) => entity.atomIds);
+    let copyIndex = 1;
+    recipe.reactants.forEach((reactant, index) => {
+      for (let copy = 1; copy < reactant.coefficient; copy++)
+        atomIds.push(...cloneEntity(entities[index], copyIndex++));
+    });
+    const center = {
+      x: (reactionPair.first.x + reactionPair.second.x) / 2,
+      y: (reactionPair.first.y + reactionPair.second.y) / 2,
+    };
+    const prepared = {
+      key: reactionEquation(recipe),
+      recipe,
+      atomIds,
+      center,
+    };
+    setPreparedReaction(prepared);
+    setSelected(atomIds);
+    return prepared;
+  }
+
+  async function runReaction(prepared = preparedReaction) {
+    if (!prepared) return;
+    const { recipe, center, atomIds } = prepared;
+    deleteAtoms(atomIds);
+    setPreparedReaction(null);
+    for (const [productIndex, product] of recipe.products.entries())
       for (let index = 0; index < product.coefficient; index++)
-        await spawnFormulaRef.current(product.formula);
+        await spawnFormulaRef.current(String(product.cid), {
+          center: {
+            x: center.x + (productIndex * 220 + index * 150),
+            y: center.y + productIndex * 170,
+          },
+          preserveView: true,
+          select: false,
+        });
+    setValidationNotice(`Reacted: ${reactionEquation(recipe)}`);
   }
 
   function toggleCompressed(groupId: number) {
@@ -1134,7 +1192,14 @@ export default function Home() {
     }
   }
 
-  async function spawnFormula(formula: string) {
+  async function spawnFormula(
+    formula: string,
+    options: {
+      center?: { x: number; y: number };
+      preserveView?: boolean;
+      select?: boolean;
+    } = {},
+  ): Promise<FormulaGroup | undefined> {
     const query = formula.normalize("NFKC").trim(),
       compact = query.replace(/\s+/g, ""),
       queryTokens = [...compact.matchAll(/([A-Z][a-z]?)(\d*)/g)],
@@ -1182,13 +1247,16 @@ export default function Home() {
         return;
       }
       const spawnIndex = formulaSpawnCount.current++;
+      const visibleCenter = {
+        x: ((canvasRef.current?.clientWidth ?? 960) / 2 - pan.x) / scale,
+        y: ((canvasRef.current?.clientHeight ?? 620) / 2 - pan.y) / scale,
+      };
       const centerX =
-          ((canvasRef.current?.clientWidth ?? 960) / 2 - pan.x) / scale +
-          1650 +
-          (spawnIndex % 3) * 520,
+          visibleCenter.x + (atomsRef.current.length ? ((spawnIndex % 3) - 1) * 260 : 0),
         centerY =
-          ((canvasRef.current?.clientHeight ?? 620) / 2 - pan.y) / scale +
-          Math.floor(spawnIndex / 3) * 520;
+          visibleCenter.y +
+          (atomsRef.current.length ? ((Math.floor(spawnIndex / 3) % 3) - 1) * 220 : 0);
+      const targetCenter = options.center ?? { x: centerX, y: centerY };
       const sourceX = payload.atoms.map((atom) => atom.x),
         sourceY = payload.atoms.map((atom) => atom.y);
       const sourceCenterX = (Math.min(...sourceX) + Math.max(...sourceX)) / 2,
@@ -1202,8 +1270,8 @@ export default function Home() {
       const created: AtomNode[] = payload.atoms.map((atom, index) => ({
         id: ids[index],
         element: allSymbols[atom.atomicNumber - 1],
-        x: centerX + (atom.x - sourceCenterX) * 190,
-        y: centerY - (atom.y - sourceCenterY) * 190,
+        x: targetCenter.x + (atom.x - sourceCenterX) * 190,
+        y: targetCenter.y - (atom.y - sourceCenterY) * 190,
         charge: 0,
         electronOffset: 0,
       }));
@@ -1232,7 +1300,7 @@ export default function Home() {
       const resolvedFormula = payload.formula.normalize("NFKC").replace(/\s+/g, "");
       const displayFormula = resolvedFormula.replace(/\d/g, (digit) => "₀₁₂₃₄₅₆₇₈₉"[Number(digit)]);
       const groupId = Date.now() + 1000;
-      if (canvasRef.current) {
+      if (canvasRef.current && !options.preserveView && atomsRef.current.length === 0) {
         const minX = Math.min(...created.map((atom) => atom.x)) - 125,
           maxX = Math.max(...created.map((atom) => atom.x)) + 125,
           minY = Math.min(...created.map((atom) => atom.y)) - 125,
@@ -1250,25 +1318,26 @@ export default function Home() {
         });
       }
       const chargedCreated = applyIonicCharges(created, createdBonds);
-      setAtoms((items) => [...items, ...chargedCreated]);
-      setBonds((items) => [...items, ...createdBonds]);
-      setFormulaGroups((groups) => [
-        ...groups,
-        {
-          id: groupId,
-          atomIds: ids,
-          formula: displayFormula,
-          name: payload.name,
-          source: payload.source,
-          cid: payload.cid,
-        },
-      ]);
-      setSelected([]);
-      setSelectedMolecule(groupId);
+      const createdGroup: FormulaGroup = {
+        id: groupId,
+        atomIds: ids,
+        formula: displayFormula,
+        name: payload.name,
+        source: payload.source,
+        cid: payload.cid,
+      };
+      atomsRef.current = [...atomsRef.current, ...chargedCreated];
+      bondsRef.current = [...bondsRef.current, ...createdBonds];
+      setAtoms(atomsRef.current);
+      setBonds(bondsRef.current);
+      setFormulaGroups((groups) => [...groups, createdGroup]);
+      setSelected(options.select === false ? [] : ids);
+      setSelectedMolecule(options.select === false ? null : groupId);
       setSelectedBond(null);
       setFormulaOpen(false);
       setFormulaInput("");
       setFormulaError("");
+      return createdGroup;
     } catch {
       setFormulaError("The structure database is unavailable. No structure was guessed.");
     } finally {
@@ -1425,20 +1494,13 @@ export default function Home() {
     try {
       const result = await validateStructure(charged, nextBonds);
       if (sequence !== validationSequence.current) return false;
-      if (!result.valid) {
-        setValidationNotice(result.reason ?? "RDKit rejected that bonding arrangement.");
-        return false;
-      }
-      setValidationNotice("");
+      if (!result.valid) return false;
       bondsRef.current = nextBonds;
       atomsRef.current = charged;
       setBonds(nextBonds);
       setAtoms(charged);
       return true;
     } catch {
-      if (sequence === validationSequence.current) {
-        setValidationNotice("RDKit validation is unavailable, so no bond was changed.");
-      }
       return false;
     }
   }
@@ -1860,22 +1922,48 @@ export default function Home() {
               />
             )}
             {validationNotice && <output className="validation-notice">{validationNotice}</output>}
-            {reactionOpportunity && (
+            {(preparedReaction || reactionChoices.length > 0) && (
               <div className="reaction-prompt" onPointerDown={(event) => event.stopPropagation()}>
-                <span>
-                  <small>{reactionOpportunity.recipe.name}</small>
-                  <b>{reactionEquation(reactionOpportunity.recipe)}</b>
-                </span>
-                <button
-                  type="button"
-                  onClick={() =>
-                    reactionOpportunity.balanced
-                      ? void runReaction()
-                      : setBalancedReaction(reactionOpportunity.key)
-                  }
-                >
-                  {reactionOpportunity.balanced ? "React" : "Balance"}
-                </button>
+                <header>
+                  <small>{preparedReaction ? "Balanced on canvas" : "Possible reactions"}</small>
+                  <strong>
+                    {preparedReaction
+                      ? "The required reactants are now present."
+                      : "Choose the route and conditions."}
+                  </strong>
+                </header>
+                <div className="reaction-options">
+                  {(preparedReaction ? [preparedReaction.recipe] : reactionChoices).map(
+                    (recipe) => (
+                      <article key={reactionEquation(recipe)}>
+                        <span>
+                          <b>{reactionEquation(recipe)}</b>
+                          <small>{recipe.condition}</small>
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (preparedReaction) {
+                              void runReaction();
+                              return;
+                            }
+                            const prepared = prepareReaction(recipe);
+                            if (
+                              prepared &&
+                              recipe.reactants.every((reactant) => reactant.coefficient === 1)
+                            )
+                              void runReaction(prepared);
+                          }}
+                        >
+                          {preparedReaction ||
+                          recipe.reactants.every((reactant) => reactant.coefficient === 1)
+                            ? "React"
+                            : "Balance"}
+                        </button>
+                      </article>
+                    ),
+                  )}
+                </div>
               </div>
             )}
             <div
@@ -2211,7 +2299,7 @@ export default function Home() {
                             .then((valid) => {
                               if (valid) relaxBondGeometry(movedIds[0]);
                             })
-                            .catch(() => setValidationNotice("RDKit validation failed."));
+                            .catch(() => {});
                       }}
                       onPointerCancel={() => {
                         gesture.current = null;
@@ -3091,38 +3179,174 @@ function formulaCounts(formula: string) {
   );
 }
 
-function mergeFormulaCounts(
-  first: Record<string, number>,
-  second: Record<string, number>,
-  firstCoefficient: number,
-  secondCoefficient: number,
-) {
-  const result: Record<string, number> = {};
-  Object.entries(first).forEach(([symbol, count]) => {
-    result[symbol] = count * firstCoefficient;
-  });
-  Object.entries(second).forEach(([symbol, count]) => {
-    result[symbol] = (result[symbol] ?? 0) + count * secondCoefficient;
-  });
-  return result;
-}
-
-function gcd(first: number, second: number): number {
-  return second ? gcd(second, first % second) : Math.abs(first);
-}
-
-function gcdAll(values: number[]) {
-  return Math.max(
-    1,
-    values.reduce((result, value) => gcd(result, value)),
+function validFormula(formula: string) {
+  const tokens = [...plainFormula(formula).matchAll(/([A-Z][a-z]?)(\d*)/g)];
+  return (
+    tokens.length > 0 &&
+    tokens.map((match) => match[0]).join("") === plainFormula(formula) &&
+    tokens.every((match) => match[1] in elements) &&
+    tokens.reduce((total, match) => total + (Number(match[2]) || 1), 0) <= 30
   );
 }
 
-function countsFormula(counts: Record<string, number>) {
-  return Object.entries(counts)
-    .sort(([first], [second]) => first.localeCompare(second))
-    .map(([symbol, count]) => `${symbol}${count > 1 ? count : ""}`)
-    .join("");
+function connectedStructure(record: StructureRecord) {
+  if (record.atoms.length <= 1) return true;
+  const adjacency = new Map<number, number[]>();
+  record.bonds.forEach((bond) => {
+    adjacency.set(bond.from, [...(adjacency.get(bond.from) ?? []), bond.to]);
+    adjacency.set(bond.to, [...(adjacency.get(bond.to) ?? []), bond.from]);
+  });
+  const visited = new Set<number>();
+  const stack = [record.atoms[0].aid];
+  while (stack.length) {
+    const aid = stack.pop()!;
+    if (visited.has(aid)) continue;
+    visited.add(aid);
+    (adjacency.get(aid) ?? []).forEach((next) => stack.push(next));
+  }
+  return visited.size === record.atoms.length;
+}
+
+function scaledCounts(formula: string, coefficient: number) {
+  return Object.fromEntries(
+    Object.entries(formulaCounts(formula)).map(([symbol, count]) => [symbol, count * coefficient]),
+  );
+}
+
+function addCounts(...parts: Array<Record<string, number>>) {
+  const result: Record<string, number> = {};
+  parts.forEach((part) =>
+    Object.entries(part).forEach(([symbol, count]) => {
+      result[symbol] = (result[symbol] ?? 0) + count;
+    }),
+  );
+  return result;
+}
+
+function sameCounts(first: Record<string, number>, second: Record<string, number>) {
+  const symbols = new Set([...Object.keys(first), ...Object.keys(second)]);
+  return [...symbols].every((symbol) => (first[symbol] ?? 0) === (second[symbol] ?? 0));
+}
+
+function balanceFormulas(reactants: string[], products: string[]) {
+  for (let first = 1; first <= 4; first++)
+    for (let second = 1; second <= 4; second++)
+      for (let productA = 1; productA <= 4; productA++)
+        for (let productB = 1; productB <= (products.length === 2 ? 4 : 1); productB++) {
+          const left = addCounts(
+            scaledCounts(reactants[0], first),
+            scaledCounts(reactants[1], second),
+          );
+          const right = addCounts(
+            scaledCounts(products[0], productA),
+            ...(products[1] ? [scaledCounts(products[1], productB)] : []),
+          );
+          if (sameCounts(left, right))
+            return {
+              reactants: [first, second],
+              products: products.length === 2 ? [productA, productB] : [productA],
+            };
+        }
+  return null;
+}
+
+async function discoverReactionChoices(first: MoleculeEntity, second: MoleculeEntity) {
+  const resolve = async (entity: MoleculeEntity) => {
+    const result = await lookupStructure(
+      entity.cid ? String(entity.cid) : (entity.name ?? entity.formula),
+    );
+    return result.record;
+  };
+  const [firstRecord, secondRecord] = await Promise.all([resolve(first), resolve(second)]);
+  if (!firstRecord?.cid || !secondRecord?.cid) return [];
+  const [firstFacts, secondFacts] = await Promise.all([
+    lookupCompoundFacts(firstRecord.cid),
+    lookupCompoundFacts(secondRecord.cid),
+  ]);
+  const mentions = (text: string, record: StructureRecord) => {
+    const lower = text.toLowerCase();
+    return (
+      lower.includes(record.name.toLowerCase()) || lower.includes(record.formula.toLowerCase())
+    );
+  };
+  const facts = [
+    ...firstFacts.reactivity.filter((text) => mentions(text, secondRecord)),
+    ...secondFacts.reactivity.filter((text) => mentions(text, firstRecord)),
+  ].filter((text) => /react|form|decompos|ignite|release/i.test(text));
+  if (!facts.length) return [];
+
+  const queries = new Set<string>();
+  facts.forEach((text) => {
+    for (const match of text.matchAll(/\b(?:[A-Z][a-z]?\d*){1,8}\b/g)) {
+      const formula = match[0];
+      if (validFormula(formula) && formula !== first.formula && formula !== second.formula)
+        queries.add(formula);
+    }
+    for (const match of text.toLowerCase().matchAll(/\b([a-z]+(?:ide|ate|ite))\b/g)) {
+      queries.add(`${firstRecord.name} ${match[1]}`);
+      queries.add(`${secondRecord.name} ${match[1]}`);
+    }
+  });
+
+  const resolvedCandidates = await Promise.all(
+    [...queries].slice(0, 18).map(async (query) => {
+      const result = await lookupStructure(query);
+      if (result.record) return result.record;
+      const alternatives = await Promise.all(
+        (result.candidates ?? [])
+          .slice(0, 5)
+          .map((candidate) => lookupStructure(String(candidate.cid))),
+      );
+      return alternatives.find((alternative) =>
+        alternative.record ? connectedStructure(alternative.record) : false,
+      )?.record;
+    }),
+  );
+  const candidates = resolvedCandidates.filter((record, index): record is StructureRecord =>
+    Boolean(
+      record?.cid &&
+      connectedStructure(record) &&
+      resolvedCandidates.findIndex((candidate) => candidate?.cid === record.cid) === index,
+    ),
+  );
+
+  const routes: ReactionRecipe[] = [];
+  const productSets = candidates.flatMap((candidate, index) => [
+    [candidate],
+    ...candidates.slice(index + 1).map((secondCandidate) => [candidate, secondCandidate]),
+  ]);
+  for (const products of productSets) {
+    const balance = balanceFormulas(
+      [first.formula, second.formula],
+      products.map((product) => product.formula),
+    );
+    if (!balance) continue;
+    const condition =
+      facts.find((text) =>
+        products.every(
+          (product) =>
+            text.toLowerCase().includes(product.name.toLowerCase()) ||
+            text.includes(product.formula),
+        ),
+      ) ??
+      facts.find((text) => text.toLowerCase().includes(secondRecord.name.toLowerCase())) ??
+      facts[0];
+    routes.push({
+      name: products.map((product) => product.name).join(" + "),
+      condition: condition.length > 240 ? `${condition.slice(0, 237)}…` : condition,
+      reactants: [
+        { formula: first.formula, coefficient: balance.reactants[0] },
+        { formula: second.formula, coefficient: balance.reactants[1] },
+      ],
+      products: products.map((product, index) => ({
+        formula: product.formula,
+        coefficient: balance.products[index],
+        cid: product.cid!,
+      })),
+    });
+    if (routes.length === 4) break;
+  }
+  return routes;
 }
 
 function reactionEquation(recipe: ReactionRecipe) {

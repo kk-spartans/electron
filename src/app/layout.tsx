@@ -13,9 +13,10 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Electron | Interactive chemistry canvas",
+  title: "electron",
   description:
     "Place atoms on a two-dimensional canvas, inspect subshells, and build covalent, ionic, and metallic bonds.",
+  icons: { icon: "/icon.svg" },
 };
 
 export default function RootLayout({

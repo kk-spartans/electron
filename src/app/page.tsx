@@ -493,6 +493,11 @@ export default function Home() {
   const [compressedGroups, setCompressedGroups] = useState<Set<number>>(() => new Set());
   const [reactionChoices, setReactionChoices] = useState<ReactionRecipe[]>([]);
   const [reactionSearching, setReactionSearching] = useState(false);
+  const [reactionSearchEmpty, setReactionSearchEmpty] = useState(false);
+  const [reactionCandidate, setReactionCandidate] = useState<{
+    key: string;
+    pairs: Array<{ first: MoleculeEntity; second: MoleculeEntity; distance: number }>;
+  } | null>(null);
   const reactionPairRef = useRef<{
     first: MoleculeEntity;
     second: MoleculeEntity;
@@ -791,13 +796,31 @@ export default function Home() {
   }, [moleculeEntities]);
 
   useEffect(() => {
+    if (!nearbyReactantPairs.length || preparedReaction || reactionSearching) return;
+    const key = nearbyReactantPairs
+      .map((pair) =>
+        [pair.first.cid ?? pair.first.formula, pair.second.cid ?? pair.second.formula]
+          .map(String)
+          .sort()
+          .join("|"),
+      )
+      .join(",");
+    setReactionCandidate((current) =>
+      current?.key === key || reactionChoices.length
+        ? current
+        : { key, pairs: nearbyReactantPairs },
+    );
+  }, [nearbyReactantPairs, preparedReaction, reactionChoices.length, reactionSearching]);
+
+  useEffect(() => {
     let current = true;
     setReactionChoices([]);
+    setReactionSearchEmpty(false);
     reactionPairRef.current = null;
-    setReactionSearching(nearbyReactantPairs.length > 0 && !preparedReaction);
-    if (!nearbyReactantPairs.length || preparedReaction) return;
+    setReactionSearching(Boolean(reactionCandidate) && !preparedReaction);
+    if (!reactionCandidate || preparedReaction) return;
     const discover = async () => {
-      for (const pair of nearbyReactantPairs) {
+      for (const pair of reactionCandidate.pairs) {
         const key = [pair.first.cid ?? pair.first.formula, pair.second.cid ?? pair.second.formula]
           .map(String)
           .sort()
@@ -817,13 +840,16 @@ export default function Home() {
           return;
         }
       }
-      if (current) setReactionSearching(false);
+      if (current) {
+        setReactionSearching(false);
+        setReactionSearchEmpty(true);
+      }
     };
     void discover();
     return () => {
       current = false;
     };
-  }, [nearbyReactantPairs, preparedReaction]);
+  }, [reactionCandidate, preparedReaction]);
 
   const compressedAtomIds = useMemo(
     () =>
@@ -992,6 +1018,10 @@ export default function Home() {
     setSelectedMolecule(null);
     setSelectedElectron(null);
     setPreparedReaction(null);
+    setReactionCandidate(null);
+    setReactionChoices([]);
+    setReactionSearching(false);
+    setReactionSearchEmpty(false);
     nextId.current = Math.max(0, ...restored.atoms.map((atom) => atom.id)) + 1;
   }
 
@@ -1207,6 +1237,10 @@ export default function Home() {
     const { recipe, center, atomIds } = prepared;
     deleteAtoms(atomIds);
     setPreparedReaction(null);
+    setReactionCandidate(null);
+    setReactionChoices([]);
+    setReactionSearching(false);
+    setReactionSearchEmpty(false);
     for (const [productIndex, product] of recipe.products.entries())
       for (let index = 0; index < product.coefficient; index++)
         await spawnFormulaRef.current(String(product.cid), {
@@ -2084,7 +2118,10 @@ export default function Home() {
               />
             )}
             {validationNotice && <output className="validation-notice">{validationNotice}</output>}
-            {(preparedReaction || reactionChoices.length > 0 || reactionSearching) && (
+            {(preparedReaction ||
+              reactionChoices.length > 0 ||
+              reactionSearching ||
+              reactionSearchEmpty) && (
               <div className="reaction-prompt" onPointerDown={(event) => event.stopPropagation()}>
                 <header>
                   <small>
@@ -2092,14 +2129,18 @@ export default function Home() {
                       ? "Balanced on canvas"
                       : reactionSearching
                         ? "Checking PubChem"
-                        : "Possible reactions"}
+                        : reactionSearchEmpty
+                          ? "No reported reaction found"
+                          : "Possible reactions"}
                   </small>
                   <strong>
                     {preparedReaction
                       ? "The required reactants are now present."
                       : reactionSearching
                         ? "Looking for reported products and balancing the equation…"
-                        : "Choose the route and conditions."}
+                        : reactionSearchEmpty
+                          ? "Try bringing a different pair of chemicals together."
+                          : "Choose the route and conditions."}
                   </strong>
                 </header>
                 <div className="reaction-options">

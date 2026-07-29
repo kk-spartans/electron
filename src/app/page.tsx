@@ -3,6 +3,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowCounterClockwise,
+  ArrowsIn,
+  ArrowsOut,
   Atom,
   FloppyDisk,
   MagnifyingGlass,
@@ -12,7 +14,12 @@ import {
 import AtomScene, { Subshell, subshellColors } from "@/components/AtomScene";
 import periodicTable from "@exabyte-io/periodic-table.js/periodic-table.json";
 import { loadRDKit, validateStructure } from "@/lib/rdkit";
-import { lookupStructure, type StructureCandidate, type StructureRecord } from "@/lib/pubchem";
+import {
+  lookupCompoundFacts,
+  lookupStructure,
+  type StructureCandidate,
+  type StructureRecord,
+} from "@/lib/pubchem";
 
 type ElementKey = string;
 type AtomNode = {
@@ -33,6 +40,13 @@ type FormulaGroup = {
   source?: string;
   cid?: number;
 };
+
+type ReactionRecipe = {
+  reactants: Array<{ formula: string; coefficient: number }>;
+  products: Array<{ formula: string; coefficient: number }>;
+  name: string;
+};
+
 type CanvasDocument = {
   version: 1;
   savedAt: string;
@@ -338,33 +352,6 @@ function subshellsForElectronCount(count: number) {
   return result;
 }
 
-const compoundNames: Record<string, { formula: string; name: string; bondUnits: number }> = {
-  ClNa: { formula: "NaCl", name: "sodium chloride", bondUnits: 1 },
-  CO2: { formula: "CO₂", name: "carbon dioxide", bondUnits: 4 },
-  H2O: { formula: "H₂O", name: "water", bondUnits: 2 },
-  CH4: { formula: "CH₄", name: "methane", bondUnits: 4 },
-  H3N: { formula: "NH₃", name: "ammonia", bondUnits: 3 },
-  ClH: { formula: "HCl", name: "hydrogen chloride", bondUnits: 1 },
-  CO: { formula: "CO", name: "carbon monoxide", bondUnits: 3 },
-  O2: { formula: "O₂", name: "oxygen", bondUnits: 2 },
-  N2: { formula: "N₂", name: "nitrogen", bondUnits: 3 },
-  H2: { formula: "H₂", name: "hydrogen", bondUnits: 1 },
-  Cl2: { formula: "Cl₂", name: "chlorine", bondUnits: 1 },
-  C2H6: { formula: "C₂H₆", name: "ethane", bondUnits: 7 },
-  C2H4: { formula: "C₂H₄", name: "ethene", bondUnits: 6 },
-  C2H2: { formula: "C₂H₂", name: "ethyne", bondUnits: 5 },
-  H2O2: { formula: "H₂O₂", name: "hydrogen peroxide", bondUnits: 3 },
-  O3: { formula: "O₃", name: "ozone", bondUnits: 3 },
-  O2S: { formula: "SO₂", name: "sulfur dioxide", bondUnits: 4 },
-  O3S: { formula: "SO₃", name: "sulfur trioxide", bondUnits: 6 },
-  CaCl2: { formula: "CaCl₂", name: "calcium chloride", bondUnits: 2 },
-  Cl2Mg: { formula: "MgCl₂", name: "magnesium chloride", bondUnits: 2 },
-  Fe2O3: { formula: "Fe₂O₃", name: "iron(III) oxide", bondUnits: 6 },
-  Na2O: { formula: "Na₂O", name: "sodium oxide", bondUnits: 2 },
-  LiO2: { formula: "LiO₂", name: "lithium superoxide", bondUnits: 2 },
-  C6H6: { formula: "C₆H₆", name: "benzene", bondUnits: 12 },
-};
-
 const periodicMain: Array<Array<[string, number]>> = [
   [
     ["H", 1],
@@ -473,6 +460,12 @@ export default function Home() {
   const [characterFilter, setCharacterFilter] = useState("all");
   const [formulaGroups, setFormulaGroups] = useState<FormulaGroup[]>([]);
   const [selectedMolecule, setSelectedMolecule] = useState<number | null>(null);
+  const [compressedGroups, setCompressedGroups] = useState<Set<number>>(() => new Set());
+  const [balancedReaction, setBalancedReaction] = useState("");
+  const [discoveredReaction, setDiscoveredReaction] = useState<{
+    recipe: ReactionRecipe;
+    entityIds: [number, number];
+  } | null>(null);
   const [validationNotice, setValidationNotice] = useState("");
   const [selectionBox, setSelectionBox] = useState<{
     startX: number;
@@ -638,50 +631,16 @@ export default function Home() {
     return () => window.clearTimeout(timeout);
   }, [validationNotice]);
 
-  const namedCompounds = useMemo(() => {
-    const adjacency = new Map<number, number[]>();
-    bonds.forEach((bond) => {
-      adjacency.set(bond.from, [...(adjacency.get(bond.from) ?? []), bond.to]);
-      adjacency.set(bond.to, [...(adjacency.get(bond.to) ?? []), bond.from]);
-    });
-    const visited = new Set<number>();
-    return atoms.flatMap((start) => {
-      if (visited.has(start.id) || !adjacency.has(start.id)) return [];
-      const stack = [start.id],
-        ids: number[] = [];
-      while (stack.length) {
-        const id = stack.pop()!;
-        if (visited.has(id)) continue;
-        visited.add(id);
-        ids.push(id);
-        (adjacency.get(id) ?? []).forEach((next) => stack.push(next));
-      }
-      const members = ids.map((id) => atomById.get(id)!).filter(Boolean);
-      const counts: Record<string, number> = {};
-      members.forEach((atom) => {
-        counts[atom.element] = (counts[atom.element] ?? 0) + 1;
-      });
-      const signature = Object.keys(counts)
-        .sort()
-        .map((symbol) => symbol + (counts[symbol] > 1 ? counts[symbol] : ""))
-        .join("");
-      const known = compoundNames[signature];
-      if (!known) return [];
-      const memberIds = new Set(ids);
-      const bondUnits = bonds
-        .filter((bond) => memberIds.has(bond.from) && memberIds.has(bond.to))
-        .reduce((total, bond) => total + bond.order, 0);
-      if (bondUnits !== known.bondUnits) return [];
-      return [
-        {
-          ...known,
-          atomIds: ids,
-          x: members.reduce((sum, atom) => sum + atom.x, 0) / members.length,
-          y: Math.max(...members.map((atom) => atom.y)) + 125,
-        },
-      ];
-    });
-  }, [atomById, atoms, bonds]);
+  // Compound identities and names come from PubChem-backed formula groups.
+  const namedCompounds = useMemo<
+    Array<{
+      formula: string;
+      name: string;
+      atomIds: number[];
+      x: number;
+      y: number;
+    }>
+  >(() => [], []);
   const activeMolecule =
     formulaGroups.find((group) => group.id === selectedMolecule) ??
     namedCompounds
@@ -693,6 +652,136 @@ export default function Home() {
         name: compound.name,
         source: "canvas structure",
       }))[0];
+
+  const moleculeEntities = useMemo(() => {
+    const claimed = new Set<number>();
+    const groups = formulaGroups.flatMap((group) => {
+      const members = group.atomIds
+        .map((id) => atomById.get(id))
+        .filter((atom): atom is AtomNode => Boolean(atom));
+      if (!members.length) return [];
+      members.forEach((atom) => claimed.add(atom.id));
+      return [
+        {
+          id: group.id,
+          formula: plainFormula(group.formula),
+          atomIds: group.atomIds,
+          x: members.reduce((sum, atom) => sum + atom.x, 0) / members.length,
+          y: members.reduce((sum, atom) => sum + atom.y, 0) / members.length,
+        },
+      ];
+    });
+    const known = namedCompounds.flatMap((compound) => {
+      if (compound.atomIds.some((id) => claimed.has(id))) return [];
+      compound.atomIds.forEach((id) => claimed.add(id));
+      return [
+        {
+          id: -Math.min(...compound.atomIds),
+          formula: plainFormula(compound.formula),
+          atomIds: compound.atomIds,
+          x: compound.x,
+          y: compound.y - 125,
+        },
+      ];
+    });
+    const singles = atoms
+      .filter(
+        (atom) =>
+          !claimed.has(atom.id) &&
+          !bonds.some((bond) => bond.from === atom.id || bond.to === atom.id),
+      )
+      .map((atom) => ({
+        id: -1_000_000 - atom.id,
+        formula: atom.element,
+        atomIds: [atom.id],
+        x: atom.x,
+        y: atom.y,
+      }));
+    return [...groups, ...known, ...singles];
+  }, [atomById, atoms, bonds, formulaGroups, namedCompounds]);
+
+  const nearbyReactants = useMemo(() => {
+    for (let firstIndex = 0; firstIndex < moleculeEntities.length; firstIndex++) {
+      for (let secondIndex = firstIndex + 1; secondIndex < moleculeEntities.length; secondIndex++) {
+        const first = moleculeEntities[firstIndex],
+          second = moleculeEntities[secondIndex];
+        if (Math.hypot(first.x - second.x, first.y - second.y) > 620) continue;
+        return { first, second };
+      }
+    }
+    return null;
+  }, [moleculeEntities]);
+
+  useEffect(() => {
+    let current = true;
+    setDiscoveredReaction(null);
+    if (!nearbyReactants) return;
+    const discover = async () => {
+      const firstCounts = formulaCounts(nearbyReactants.first.formula);
+      const secondCounts = formulaCounts(nearbyReactants.second.formula);
+      for (let firstCoefficient = 1; firstCoefficient <= 3; firstCoefficient++)
+        for (let secondCoefficient = 1; secondCoefficient <= 3; secondCoefficient++) {
+          const combined = mergeFormulaCounts(
+            firstCounts,
+            secondCounts,
+            firstCoefficient,
+            secondCoefficient,
+          );
+          const divisor = gcdAll(Object.values(combined));
+          const productCoefficient = divisor;
+          const productFormula = countsFormula(
+            Object.fromEntries(
+              Object.entries(combined).map(([symbol, count]) => [symbol, count / divisor]),
+            ),
+          );
+          const result = await lookupStructure(productFormula);
+          if (!current) return;
+          if (!result.record) continue;
+          setDiscoveredReaction({
+            entityIds: [nearbyReactants.first.id, nearbyReactants.second.id],
+            recipe: {
+              reactants: [
+                { formula: nearbyReactants.first.formula, coefficient: firstCoefficient },
+                { formula: nearbyReactants.second.formula, coefficient: secondCoefficient },
+              ],
+              products: [{ formula: result.record.formula, coefficient: productCoefficient }],
+              name: `${result.record.name} formation · PubChem`,
+            },
+          });
+          return;
+        }
+    };
+    void discover();
+    return () => {
+      current = false;
+    };
+  }, [nearbyReactants]);
+
+  const reactionOpportunity = useMemo(() => {
+    if (!nearbyReactants || !discoveredReaction) return null;
+    const ids = [nearbyReactants.first.id, nearbyReactants.second.id] as [number, number];
+    if (!ids.every((id) => discoveredReaction.entityIds.includes(id))) return null;
+    const recipe = discoveredReaction.recipe;
+    const key = `${recipe.products[0].formula}:${[...ids].sort((a, b) => a - b).join(":")}`;
+    return {
+      recipe,
+      first: nearbyReactants.first,
+      second: nearbyReactants.second,
+      key,
+      balanced:
+        recipe.reactants.every((item) => item.coefficient === 1) || balancedReaction === key,
+    };
+  }, [balancedReaction, discoveredReaction, nearbyReactants]);
+
+  const compressedAtomIds = useMemo(
+    () =>
+      new Set(
+        formulaGroups
+          .filter((group) => compressedGroups.has(group.id))
+          .flatMap((group) => group.atomIds),
+      ),
+    [compressedGroups, formulaGroups],
+  );
 
   const dipoleAttractions = useMemo(() => {
     const covalent = bonds.filter((bond) => bond.type === "covalent");
@@ -723,15 +812,7 @@ export default function Home() {
           to = atomById.get(bond.to)!;
         return Math.abs(pauling(from.element) - pauling(to.element)) >= 0.4;
       });
-      const counts: Record<string, number> = {};
-      members.forEach((atom) => {
-        counts[atom.element] = (counts[atom.element] ?? 0) + 1;
-      });
-      const signature = Object.keys(counts)
-        .sort()
-        .map((symbol) => symbol + (counts[symbol] > 1 ? counts[symbol] : ""))
-        .join("");
-      if (!polar || ["CO2", "CH4", "O3S"].includes(signature)) return [];
+      if (!polar) return [];
       const sorted = [...members].sort((a, b) => pauling(a.element) - pauling(b.element));
       return [
         {
@@ -927,6 +1008,29 @@ export default function Home() {
     setFormulaGroups((groups) =>
       groups.filter((group) => !group.atomIds.some((id) => removed.has(id))),
     );
+  }
+
+  async function runReaction() {
+    if (!reactionOpportunity) return;
+    const removedIds = [
+      ...reactionOpportunity.first.atomIds,
+      ...reactionOpportunity.second.atomIds,
+    ];
+    deleteAtoms(removedIds);
+    setBalancedReaction("");
+    setValidationNotice(`Reacted: ${reactionEquation(reactionOpportunity.recipe)}`);
+    for (const product of reactionOpportunity.recipe.products)
+      for (let index = 0; index < product.coefficient; index++)
+        await spawnFormulaRef.current(product.formula);
+  }
+
+  function toggleCompressed(groupId: number) {
+    setCompressedGroups((current) => {
+      const next = new Set(current);
+      if (next.has(groupId)) next.delete(groupId);
+      else next.add(groupId);
+      return next;
+    });
   }
 
   function currentCanvasDocument(): CanvasDocument {
@@ -1126,36 +1230,6 @@ export default function Home() {
         ];
       });
       const resolvedFormula = payload.formula.normalize("NFKC").replace(/\s+/g, "");
-      const constrainedAngles: Record<string, number> = {
-        H2O: 104.5,
-        CO2: 180,
-        O3: 116.8,
-        O2S: 119,
-        SO2: 119,
-      };
-      const constrainedAngle = constrainedAngles[resolvedFormula];
-      if (constrainedAngle) {
-        const center = created
-          .map((atom) => ({
-            atom,
-            bonds: createdBonds.filter((bond) => bond.from === atom.id || bond.to === atom.id),
-          }))
-          .sort((a, b) => b.bonds.length - a.bonds.length)[0];
-        if (center?.bonds.length === 2) {
-          const neighbors = center.bonds
-            .map((bond) => atomById.get(bond.from === center.atom.id ? bond.to : bond.from)!)
-            .filter(Boolean);
-          const reference = Math.atan2(
-              neighbors[0].y - center.atom.y,
-              neighbors[0].x - center.atom.x,
-            ),
-            distance = Math.hypot(neighbors[1].x - center.atom.x, neighbors[1].y - center.atom.y);
-          neighbors[1].x =
-            center.atom.x + Math.cos(reference + (constrainedAngle * Math.PI) / 180) * distance;
-          neighbors[1].y =
-            center.atom.y + Math.sin(reference + (constrainedAngle * Math.PI) / 180) * distance;
-        }
-      }
       const displayFormula = resolvedFormula.replace(/\d/g, (digit) => "₀₁₂₃₄₅₆₇₈₉"[Number(digit)]);
       const groupId = Date.now() + 1000;
       if (canvasRef.current) {
@@ -1785,85 +1859,103 @@ export default function Home() {
                 }}
               />
             )}
-            {validationNotice && (
-              <output className="validation-notice" role="status">
-                {validationNotice}
-              </output>
+            {validationNotice && <output className="validation-notice">{validationNotice}</output>}
+            {reactionOpportunity && (
+              <div className="reaction-prompt" onPointerDown={(event) => event.stopPropagation()}>
+                <span>
+                  <small>{reactionOpportunity.recipe.name}</small>
+                  <b>{reactionEquation(reactionOpportunity.recipe)}</b>
+                </span>
+                <button
+                  type="button"
+                  onClick={() =>
+                    reactionOpportunity.balanced
+                      ? void runReaction()
+                      : setBalancedReaction(reactionOpportunity.key)
+                  }
+                >
+                  {reactionOpportunity.balanced ? "React" : "Balance"}
+                </button>
+              </div>
             )}
             <div
               className="canvas-world"
               style={{ transform: `translate3d(${pan.x}px, ${pan.y}px, 0)` }}
             >
               <svg className="bond-layer" width="1600" height="1000">
-                {bonds.map((bond) => {
-                  const from = atomById.get(bond.from);
-                  const to = atomById.get(bond.to);
-                  if (!from || !to) return null;
-                  const x1 = from.x * scale,
-                    y1 = from.y * scale,
-                    x2 = to.x * scale,
-                    y2 = to.y * scale,
-                    mx = (x1 + x2) / 2,
-                    my = (y1 + y2) / 2;
-                  const fromSubshells = subshellsForElectronCount(
-                      elements[from.element].z - from.charge + from.electronOffset,
-                    ),
-                    toSubshells = subshellsForElectronCount(
-                      elements[to.element].z - to.charge + to.electronOffset,
+                {bonds
+                  .filter(
+                    (bond) => !compressedAtomIds.has(bond.from) && !compressedAtomIds.has(bond.to),
+                  )
+                  .map((bond) => {
+                    const from = atomById.get(bond.from);
+                    const to = atomById.get(bond.to);
+                    if (!from || !to) return null;
+                    const x1 = from.x * scale,
+                      y1 = from.y * scale,
+                      x2 = to.x * scale,
+                      y2 = to.y * scale,
+                      mx = (x1 + x2) / 2,
+                      my = (y1 + y2) / 2;
+                    const fromSubshells = subshellsForElectronCount(
+                        elements[from.element].z - from.charge + from.electronOffset,
+                      ),
+                      toSubshells = subshellsForElectronCount(
+                        elements[to.element].z - to.charge + to.electronOffset,
+                      );
+                    const fromColor = subshellColors[fromSubshells.at(-1)?.kind ?? "s"],
+                      toColor = subshellColors[toSubshells.at(-1)?.kind ?? "s"];
+                    const superoxide =
+                      bond.type === "covalent" &&
+                      bond.order === 1 &&
+                      from.element === "O" &&
+                      to.element === "O" &&
+                      bonds.some(
+                        (item) =>
+                          item.type === "ionic" &&
+                          [item.from, item.to].some(
+                            (atomId) => atomId === from.id || atomId === to.id,
+                          ) &&
+                          [item.from, item.to].some(
+                            (atomId) => atomById.get(atomId)?.element === "Li",
+                          ),
+                      );
+                    return (
+                      <g
+                        key={bond.id}
+                        className={`bond-line ${bond.type} ${selectedBond === bond.id ? "selected" : ""}`}
+                      >
+                        <line x1={x1} y1={y1} x2={x2} y2={y2} />
+                        {bond.order > 1 && (
+                          <line x1={x1} y1={y1 + 8 * scale} x2={x2} y2={y2 + 8 * scale} />
+                        )}
+                        {bond.type === "covalent" &&
+                          Array.from({ length: bond.order }, (_, i) => (
+                            <g key={i}>
+                              <circle
+                                className="shared-electron"
+                                style={{ fill: fromColor }}
+                                cx={mx - 5 * scale}
+                                cy={my + (i - (bond.order - 1) / 2) * 10 * scale}
+                                r={3 * scale}
+                              />
+                              <circle
+                                className="shared-electron"
+                                style={{ fill: toColor }}
+                                cx={mx + 5 * scale}
+                                cy={my + (i - (bond.order - 1) / 2) * 10 * scale}
+                                r={3 * scale}
+                              />
+                            </g>
+                          ))}
+                        {superoxide && (
+                          <text className="delocalized-charge" x={mx} y={my - 18 * scale}>
+                            −1 over O₂
+                          </text>
+                        )}
+                      </g>
                     );
-                  const fromColor = subshellColors[fromSubshells.at(-1)?.kind ?? "s"],
-                    toColor = subshellColors[toSubshells.at(-1)?.kind ?? "s"];
-                  const superoxide =
-                    bond.type === "covalent" &&
-                    bond.order === 1 &&
-                    from.element === "O" &&
-                    to.element === "O" &&
-                    bonds.some(
-                      (item) =>
-                        item.type === "ionic" &&
-                        [item.from, item.to].some(
-                          (atomId) => atomId === from.id || atomId === to.id,
-                        ) &&
-                        [item.from, item.to].some(
-                          (atomId) => atomById.get(atomId)?.element === "Li",
-                        ),
-                    );
-                  return (
-                    <g
-                      key={bond.id}
-                      className={`bond-line ${bond.type} ${selectedBond === bond.id ? "selected" : ""}`}
-                    >
-                      <line x1={x1} y1={y1} x2={x2} y2={y2} />
-                      {bond.order > 1 && (
-                        <line x1={x1} y1={y1 + 8 * scale} x2={x2} y2={y2 + 8 * scale} />
-                      )}
-                      {bond.type === "covalent" &&
-                        Array.from({ length: bond.order }, (_, i) => (
-                          <g key={i}>
-                            <circle
-                              className="shared-electron"
-                              style={{ fill: fromColor }}
-                              cx={mx - 5 * scale}
-                              cy={my + (i - (bond.order - 1) / 2) * 10 * scale}
-                              r={3 * scale}
-                            />
-                            <circle
-                              className="shared-electron"
-                              style={{ fill: toColor }}
-                              cx={mx + 5 * scale}
-                              cy={my + (i - (bond.order - 1) / 2) * 10 * scale}
-                              r={3 * scale}
-                            />
-                          </g>
-                        ))}
-                      {superoxide && (
-                        <text className="delocalized-charge" x={mx} y={my - 18 * scale}>
-                          −1 over O₂
-                        </text>
-                      )}
-                    </g>
-                  );
-                })}
+                  })}
                 {dipoleAttractions.map((attraction) => {
                   const x1 = attraction.from.x * scale,
                     y1 = attraction.from.y * scale,
@@ -1912,84 +2004,87 @@ export default function Home() {
                     );
                   })}
               </svg>
-              {bonds.map((bond) => {
-                const from = atomById.get(bond.from),
-                  to = atomById.get(bond.to);
-                if (!from || !to) return null;
-                const mx = ((from.x + to.x) * scale) / 2,
-                  my = ((from.y + to.y) * scale) / 2;
-                return (
+              {bonds
+                .filter(
+                  (bond) => !compressedAtomIds.has(bond.from) && !compressedAtomIds.has(bond.to),
+                )
+                .map((bond) => {
+                  const from = atomById.get(bond.from),
+                    to = atomById.get(bond.to);
+                  if (!from || !to) return null;
+                  const mx = ((from.x + to.x) * scale) / 2,
+                    my = ((from.y + to.y) * scale) / 2;
+                  return (
+                    <button
+                      type="button"
+                      key={`target-${bond.id}`}
+                      className="bond-target"
+                      style={{ transform: `translate(${mx - 42}px,${my - 30}px)` }}
+                      aria-label={`Inspect ${bond.type} bond`}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        setSelectedBond(bond.id);
+                        setSelectedMolecule(null);
+                        setSelected([]);
+                      }}
+                    >
+                      {scale >= 0.45 ? bond.type : ""}
+                    </button>
+                  );
+                })}
+              {namedCompounds
+                .filter((compound) => !compound.atomIds.some((id) => compressedAtomIds.has(id)))
+                .map((compound) => (
                   <button
                     type="button"
-                    key={`target-${bond.id}`}
-                    className="bond-target"
-                    style={{ transform: `translate(${mx - 42}px,${my - 30}px)` }}
-                    aria-label={`Inspect ${bond.type} bond`}
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      setSelectedBond(bond.id);
-                      setSelectedMolecule(null);
-                      setSelected([]);
+                    className="compound-label"
+                    key={`${compound.formula}-${compound.x}-${compound.y}`}
+                    style={{
+                      transform: `translate(${compound.x * scale}px, ${compound.y * scale}px)`,
+                    }}
+                    onPointerDown={(event) => {
+                      const group = formulaGroups.find(
+                        (candidate) =>
+                          candidate.atomIds.length === compound.atomIds.length &&
+                          candidate.atomIds.every((id) => compound.atomIds.includes(id)),
+                      );
+                      beginCompoundDrag(
+                        event,
+                        group?.id ?? -Math.min(...compound.atomIds),
+                        compound.atomIds,
+                      );
+                    }}
+                    onPointerMove={pointerMove}
+                    onPointerUp={() => {
+                      gesture.current = null;
+                    }}
+                    onPointerCancel={() => {
+                      gesture.current = null;
+                    }}
+                    onLostPointerCapture={() => {
+                      gesture.current = null;
+                    }}
+                    onKeyDown={(event) => {
+                      if (event.key !== "Enter" && event.key !== " ") return;
+                      event.preventDefault();
+                      const group = formulaGroups.find(
+                        (candidate) =>
+                          candidate.atomIds.length === compound.atomIds.length &&
+                          candidate.atomIds.every((id) => compound.atomIds.includes(id)),
+                      );
+                      selectCompound(
+                        group?.id ?? -Math.min(...compound.atomIds),
+                        compound.atomIds,
+                        event.shiftKey,
+                      );
                     }}
                   >
-                    {scale >= 0.45 ? bond.type : ""}
+                    <b>{compound.formula}</b>
+                    <span>{compound.name}</span>
                   </button>
-                );
-              })}
-              {namedCompounds.map((compound) => (
-                <button
-                  type="button"
-                  className="compound-label"
-                  key={`${compound.formula}-${compound.x}-${compound.y}`}
-                  style={{
-                    transform: `translate(${compound.x * scale}px, ${compound.y * scale}px)`,
-                  }}
-                  onPointerDown={(event) => {
-                    const group = formulaGroups.find(
-                      (candidate) =>
-                        candidate.atomIds.length === compound.atomIds.length &&
-                        candidate.atomIds.every((id) => compound.atomIds.includes(id)),
-                    );
-                    beginCompoundDrag(
-                      event,
-                      group?.id ?? -Math.min(...compound.atomIds),
-                      compound.atomIds,
-                    );
-                  }}
-                  onPointerMove={pointerMove}
-                  onPointerUp={() => {
-                    gesture.current = null;
-                  }}
-                  onPointerCancel={() => {
-                    gesture.current = null;
-                  }}
-                  onLostPointerCapture={() => {
-                    gesture.current = null;
-                  }}
-                  onKeyDown={(event) => {
-                    if (event.key !== "Enter" && event.key !== " ") return;
-                    event.preventDefault();
-                    const group = formulaGroups.find(
-                      (candidate) =>
-                        candidate.atomIds.length === compound.atomIds.length &&
-                        candidate.atomIds.every((id) => compound.atomIds.includes(id)),
-                    );
-                    selectCompound(
-                      group?.id ?? -Math.min(...compound.atomIds),
-                      compound.atomIds,
-                      event.shiftKey,
-                    );
-                  }}
-                >
-                  <b>{compound.formula}</b>
-                  <span>{compound.name}</span>
-                </button>
-              ))}
+                ))}
               {formulaGroups
-                .filter(
-                  (group) =>
-                    !Object.values(compoundNames).some((compound) => compound.name === group.name),
-                )
+                .filter((group) => !compressedGroups.has(group.id))
                 .flatMap((group) => {
                   const members = group.atomIds
                     .map((id) => atomById.get(id))
@@ -2029,97 +2124,127 @@ export default function Home() {
                     </button>
                   );
                 })}
-              {atoms.map((atom) => {
-                const item = elements[atom.element];
-                const isSelected = selectedAtomIds.has(atom.id);
-                const bondVisual = atomBondVisuals.get(atom.id);
-                const sharedElectrons = bondVisual?.sharedElectrons ?? 0;
-                const sharedFrom = bondVisual?.sharedFrom ?? [];
-                const atomSize = 200 * scale;
-                return (
-                  <div
-                    role="button"
-                    tabIndex={0}
-                    className={`canvas-atom ${isSelected ? "selected" : ""}`}
-                    style={{
-                      width: atomSize,
-                      height: atomSize,
-                      transform: `translate(${atom.x * scale - atomSize / 2}px, ${atom.y * scale - atomSize / 2}px)`,
-                    }}
-                    key={atom.id}
-                    onKeyDown={(event) => {
-                      if (event.key === "Enter" || event.key === " ") {
-                        event.preventDefault();
-                        selectAtom(atom.id, event.shiftKey);
-                      }
-                    }}
-                    onPointerDown={(event) => {
-                      event.stopPropagation();
-                      if ((event.target as Element).closest(".diagram-electron")) return;
-                      event.currentTarget.setPointerCapture(event.pointerId);
-                      const moveIds = isSelected
-                        ? selected
-                        : event.shiftKey
-                          ? [...selected, atom.id]
-                          : [atom.id];
-                      const moveSet = new Set(moveIds);
-                      setSelected(moveIds);
-                      setSelectedMolecule(null);
-                      setSelectedBond(null);
-                      gesture.current = {
-                        type: "selection",
-                        sx: event.clientX,
-                        sy: event.clientY,
-                        origins: new Map(
-                          atoms
-                            .filter((item) => moveSet.has(item.id))
-                            .map((item) => [item.id, { x: item.x, y: item.y }]),
-                        ),
-                      };
-                    }}
-                    onPointerMove={pointerMove}
-                    onPointerUp={() => {
-                      const current = gesture.current;
-                      const movedIds =
-                        current?.type === "selection" ? [...current.origins.keys()] : [];
-                      gesture.current = null;
-                      if (movedIds.length === 1)
-                        void settleAtom(movedIds[0])
-                          .then((valid) => {
-                            if (valid) relaxBondGeometry(movedIds[0]);
-                          })
-                          .catch(() => setValidationNotice("RDKit validation failed."));
-                    }}
-                    onPointerCancel={() => {
-                      gesture.current = null;
-                    }}
-                    onLostPointerCapture={() => {
-                      gesture.current = null;
-                    }}
-                    aria-label={`${item.name} atom`}
-                  >
-                    <AtomScene
-                      symbol={atom.element}
-                      atomicNumber={item.z}
-                      subshells={subshellsForElectronCount(
-                        item.z - atom.charge + atom.electronOffset,
-                      )}
-                      sharedElectrons={sharedElectrons}
-                      sharedFrom={sharedFrom}
-                      onElectronSelect={(electron) => {
-                        setSelected([atom.id]);
-                        setSelectedBond(null);
-                        setSelectedElectron({ atomId: atom.id, ...electron });
+              {formulaGroups
+                .filter((group) => compressedGroups.has(group.id))
+                .flatMap((group) => {
+                  const members = group.atomIds
+                    .map((id) => atomById.get(id))
+                    .filter((atom): atom is AtomNode => Boolean(atom));
+                  if (!members.length) return [];
+                  const x = members.reduce((sum, atom) => sum + atom.x, 0) / members.length;
+                  const y = members.reduce((sum, atom) => sum + atom.y, 0) / members.length;
+                  return (
+                    <button
+                      type="button"
+                      className="compressed-compound"
+                      key={`compressed-${group.id}`}
+                      style={{ transform: `translate(${x * scale - 46}px,${y * scale - 46}px)` }}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        selectCompound(group.id, group.atomIds);
                       }}
-                    />
-                    {atom.charge !== 0 && (
-                      <span className={`atom-charge ${atom.charge > 0 ? "positive" : "negative"}`}>
-                        {atom.charge > 0 ? `+${atom.charge}` : atom.charge}
-                      </span>
-                    )}
-                  </div>
-                );
-              })}
+                      aria-label={`Expand or inspect ${group.formula}`}
+                    >
+                      <b>{group.formula}</b>
+                      <span>{group.name ?? "compound"}</span>
+                    </button>
+                  );
+                })}
+              {atoms
+                .filter((atom) => !compressedAtomIds.has(atom.id))
+                .map((atom) => {
+                  const item = elements[atom.element];
+                  const isSelected = selectedAtomIds.has(atom.id);
+                  const bondVisual = atomBondVisuals.get(atom.id);
+                  const sharedElectrons = bondVisual?.sharedElectrons ?? 0;
+                  const sharedFrom = bondVisual?.sharedFrom ?? [];
+                  const atomSize = 200 * scale;
+                  return (
+                    <div
+                      role="button"
+                      tabIndex={0}
+                      className={`canvas-atom ${isSelected ? "selected" : ""}`}
+                      style={{
+                        width: atomSize,
+                        height: atomSize,
+                        transform: `translate(${atom.x * scale - atomSize / 2}px, ${atom.y * scale - atomSize / 2}px)`,
+                      }}
+                      key={atom.id}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter" || event.key === " ") {
+                          event.preventDefault();
+                          selectAtom(atom.id, event.shiftKey);
+                        }
+                      }}
+                      onPointerDown={(event) => {
+                        event.stopPropagation();
+                        if ((event.target as Element).closest(".diagram-electron")) return;
+                        event.currentTarget.setPointerCapture(event.pointerId);
+                        const moveIds = isSelected
+                          ? selected
+                          : event.shiftKey
+                            ? [...selected, atom.id]
+                            : [atom.id];
+                        const moveSet = new Set(moveIds);
+                        setSelected(moveIds);
+                        setSelectedMolecule(null);
+                        setSelectedBond(null);
+                        gesture.current = {
+                          type: "selection",
+                          sx: event.clientX,
+                          sy: event.clientY,
+                          origins: new Map(
+                            atoms
+                              .filter((item) => moveSet.has(item.id))
+                              .map((item) => [item.id, { x: item.x, y: item.y }]),
+                          ),
+                        };
+                      }}
+                      onPointerMove={pointerMove}
+                      onPointerUp={() => {
+                        const current = gesture.current;
+                        const movedIds =
+                          current?.type === "selection" ? [...current.origins.keys()] : [];
+                        gesture.current = null;
+                        if (movedIds.length === 1)
+                          void settleAtom(movedIds[0])
+                            .then((valid) => {
+                              if (valid) relaxBondGeometry(movedIds[0]);
+                            })
+                            .catch(() => setValidationNotice("RDKit validation failed."));
+                      }}
+                      onPointerCancel={() => {
+                        gesture.current = null;
+                      }}
+                      onLostPointerCapture={() => {
+                        gesture.current = null;
+                      }}
+                      aria-label={`${item.name} atom`}
+                    >
+                      <AtomScene
+                        symbol={atom.element}
+                        atomicNumber={item.z}
+                        subshells={subshellsForElectronCount(
+                          item.z - atom.charge + atom.electronOffset,
+                        )}
+                        sharedElectrons={sharedElectrons}
+                        sharedFrom={sharedFrom}
+                        onElectronSelect={(electron) => {
+                          setSelected([atom.id]);
+                          setSelectedBond(null);
+                          setSelectedElectron({ atomId: atom.id, ...electron });
+                        }}
+                      />
+                      {atom.charge !== 0 && (
+                        <span
+                          className={`atom-charge ${atom.charge > 0 ? "positive" : "negative"}`}
+                        >
+                          {atom.charge > 0 ? `+${atom.charge}` : atom.charge}
+                        </span>
+                      )}
+                    </div>
+                  );
+                })}
               {active && activeElement && (
                 <div
                   className="canvas-atom-controls"
@@ -2273,6 +2398,8 @@ export default function Home() {
                 bonds={bonds}
                 onClose={() => setSelectedMolecule(null)}
                 onDelete={() => deleteAtoms(activeMolecule.atomIds)}
+                compressed={compressedGroups.has(activeMolecule.id)}
+                onToggleCompressed={() => toggleCompressed(activeMolecule.id)}
               />
             ) : active && activeElement ? (
               <>
@@ -2331,10 +2458,20 @@ export default function Home() {
                             </div>
                             <div className="subshell-list">
                               {shellSubshells.map((subshell) => (
-                                <div key={subshell.label}>
+                                <div
+                                  key={subshell.label}
+                                  className={
+                                    subshell.label === activeSubshells.at(-1)?.label
+                                      ? "last-filled"
+                                      : ""
+                                  }
+                                >
                                   <i style={{ background: subshellColors[subshell.kind] }} />
                                   <b>{subshell.label}</b>
                                   <span>{subshell.count} electrons</span>
+                                  {subshell.label === activeSubshells.at(-1)?.label && (
+                                    <em>last filled</em>
+                                  )}
                                 </div>
                               ))}
                             </div>
@@ -2345,6 +2482,14 @@ export default function Home() {
                   </div>
                 </section>
                 <AtomLearning atom={active} atoms={atoms} bonds={bonds} />
+                <ElementPlacement symbol={active.element} />
+                <section>
+                  <h2>pH</h2>
+                  <p>
+                    An isolated {activeElement.name.toLowerCase()} atom has no pH. pH applies when a
+                    substance is dissolved in water, and depends on concentration and temperature.
+                  </p>
+                </section>
                 <section>
                   <h2>Why it changes</h2>
                   <p>{activeElement.note}</p>
@@ -2667,12 +2812,16 @@ function MoleculeInspector({
   bonds,
   onClose,
   onDelete,
+  compressed,
+  onToggleCompressed,
 }: {
   group: FormulaGroup;
   atoms: AtomNode[];
   bonds: BondEdge[];
   onClose: () => void;
   onDelete: () => void;
+  compressed: boolean;
+  onToggleCompressed: () => void;
 }) {
   const memberIds = new Set(group.atomIds);
   const members = atoms.filter((atom) => memberIds.has(atom.id));
@@ -2741,12 +2890,20 @@ function MoleculeInspector({
         )}
       </section>
       <section>
+        <h2>pH</h2>
+        <MoleculePh cid={group.cid} />
+      </section>
+      <section>
         <h2>Canvas interaction</h2>
         <p>
           Drag anywhere in the outlined molecular area to move every atom and bond together.
           Individual atoms and bonds remain selectable.
         </p>
       </section>
+      <button type="button" className="compress-molecule" onClick={onToggleCompressed}>
+        {compressed ? <ArrowsOut /> : <ArrowsIn />}
+        {compressed ? "Expand structure" : "Compress to one circle"}
+      </button>
       <button type="button" className="remove-bond" onClick={onDelete}>
         <Trash /> Delete molecule
       </button>
@@ -2876,6 +3033,127 @@ function pauling(symbol: string) {
   );
 }
 
+function ElementPlacement({ symbol }: { symbol: string }) {
+  const data = elements[symbol];
+  const mainPosition = periodicMain.flatMap((row, periodIndex) =>
+    row
+      .filter(([candidate]) => candidate === symbol)
+      .map(([, group]) => ({
+        period: periodIndex + 1,
+        group,
+      })),
+  )[0];
+  const fRow = periodicFBlock.findIndex((row) => row.includes(symbol));
+  const period = mainPosition?.period ?? (fRow === 0 ? 6 : 7);
+  const group = mainPosition?.group ?? 3;
+  const last = data.subshells.at(-1);
+  const block = last?.kind ?? "s";
+  const mainGroup = data.z <= 20;
+  const groupReason = mainGroup
+    ? group <= 2
+      ? `${data.valence} outer-shell electron${data.valence === 1 ? "" : "s"} place it in group ${group}.`
+      : `${data.valence} valence electrons map to main-group ${group} (group number = valence + 10).`
+    : block === "d"
+      ? `Its differentiating electron enters a d subshell. For transition metals, the group follows the combined outer s and incomplete (n−1)d electrons, not outer-shell electrons alone.`
+      : block === "f"
+        ? `Its differentiating electron enters an f subshell, placing it in the inner-transition ${period === 6 ? "lanthanide" : "actinide"} series conventionally associated with group 3.`
+        : `Its last-filled ${last?.label} subshell places it in the ${block}-block; the occupied outer ${block} subshell determines its main-group column.`;
+  return (
+    <section className="element-placement">
+      <h2>
+        Why period {period}, group {group}
+      </h2>
+      <p>
+        <b>Period {period}</b> comes from the highest occupied principal shell, n = {period}.{" "}
+        {groupReason}
+      </p>
+      <div className="placement-tags">
+        <span>{block}-block</span>
+        <span>last filled: {last?.label}</span>
+      </div>
+    </section>
+  );
+}
+
+function plainFormula(formula: string) {
+  return formula
+    .normalize("NFKC")
+    .replace(/[₀-₉]/g, (digit) => String("₀₁₂₃₄₅₆₇₈₉".indexOf(digit)));
+}
+
+function formulaCounts(formula: string) {
+  return [...plainFormula(formula).matchAll(/([A-Z][a-z]?)(\d*)/g)].reduce<Record<string, number>>(
+    (counts, match) => {
+      counts[match[1]] = (counts[match[1]] ?? 0) + (Number(match[2]) || 1);
+      return counts;
+    },
+    {},
+  );
+}
+
+function mergeFormulaCounts(
+  first: Record<string, number>,
+  second: Record<string, number>,
+  firstCoefficient: number,
+  secondCoefficient: number,
+) {
+  const result: Record<string, number> = {};
+  Object.entries(first).forEach(([symbol, count]) => {
+    result[symbol] = count * firstCoefficient;
+  });
+  Object.entries(second).forEach(([symbol, count]) => {
+    result[symbol] = (result[symbol] ?? 0) + count * secondCoefficient;
+  });
+  return result;
+}
+
+function gcd(first: number, second: number): number {
+  return second ? gcd(second, first % second) : Math.abs(first);
+}
+
+function gcdAll(values: number[]) {
+  return Math.max(
+    1,
+    values.reduce((result, value) => gcd(result, value)),
+  );
+}
+
+function countsFormula(counts: Record<string, number>) {
+  return Object.entries(counts)
+    .sort(([first], [second]) => first.localeCompare(second))
+    .map(([symbol, count]) => `${symbol}${count > 1 ? count : ""}`)
+    .join("");
+}
+
+function reactionEquation(recipe: ReactionRecipe) {
+  const side = (items: ReactionRecipe["reactants"]) =>
+    items
+      .map((item) => `${item.coefficient > 1 ? item.coefficient : ""}${item.formula}`)
+      .join(" + ");
+  return `${side(recipe.reactants)} → ${side(recipe.products)}`;
+}
+
+function MoleculePh({ cid }: { cid?: number }) {
+  const [values, setValues] = useState<string[]>([]);
+  useEffect(() => {
+    let current = true;
+    setValues([]);
+    if (cid) void lookupCompoundFacts(cid).then((facts) => current && setValues(facts.ph));
+    return () => {
+      current = false;
+    };
+  }, [cid]);
+  if (!cid) return <p>Link this structure to a PubChem record to retrieve reported pH data.</p>;
+  if (!values.length)
+    return (
+      <p>
+        No pH value is reported by PubChem. pH also requires an aqueous concentration and
+        temperature.
+      </p>
+    );
+  return <p>{values.join(" · ")}</p>;
+}
+
 function AtomLearning({
   atom,
   atoms,
@@ -2939,73 +3217,32 @@ function AtomLearning({
             ? "An unpaired electron makes this a radical-like arrangement"
             : null;
   const permitsNonOctet = Boolean(exception) && unpaired === 0;
-  const componentIds = new Set<number>(),
-    stack = [atom.id];
-  while (stack.length) {
-    const id = stack.pop()!;
-    if (componentIds.has(id)) continue;
-    componentIds.add(id);
-    bonds
-      .filter((bond) => bond.from === id || bond.to === id)
-      .forEach((bond) => stack.push(bond.from === id ? bond.to : bond.from));
-  }
-  const counts = [...componentIds]
-    .map((id) => atoms.find((item) => item.id === id)!)
-    .reduce<Record<string, number>>(
-      (result, item) => ({ ...result, [item.element]: (result[item.element] ?? 0) + 1 }),
-      {},
-    );
-  const signature = Object.keys(counts)
-    .sort()
-    .map((symbol) => symbol + (counts[symbol] > 1 ? counts[symbol] : ""))
-    .join("");
   const stable =
-    signature === "LiO2"
+    connected.length === 0
       ? {
-          tone: "good",
-          title: "RDKit-valid superoxide",
-          text: "The O₂⁻ unit is a radical anion. Its −1 charge and odd electron are delocalized over both oxygen atoms.",
+          tone: "neutral",
+          title: "Unbonded",
+          text: "Move the atom near compatible partners to test a structure.",
         }
-      : connected.length === 0
+      : shellCount === shellTarget || permitsNonOctet
         ? {
-            tone: "neutral",
-            title: "Unbonded",
-            text: "Move the atom near compatible partners to test a structure.",
+            tone: "good",
+            title: "Locally satisfied",
+            text: isIonic
+              ? `After electron transfer, shell ${outerShell} is the ion’s outer occupied shell and contains ${shellCount} of ${shellTarget} electrons.`
+              : `The displayed valence shell has ${shellCount} electrons when shared electrons are counted.`,
           }
-        : shellCount === shellTarget || permitsNonOctet
+        : shellCount < shellTarget
           ? {
-              tone: "good",
-              title: "Locally satisfied",
-              text: isIonic
-                ? `After electron transfer, shell ${outerShell} is the ion’s outer occupied shell and contains ${shellCount} of ${shellTarget} electrons.`
-                : `The displayed valence shell has ${shellCount} electrons when shared electrons are counted.`,
+              tone: "warn",
+              title: unpaired ? "Radical with incomplete shell" : "Incomplete valence shell",
+              text: `The actual outer occupied shell ${isIonic ? `(shell ${outerShell}) ` : ""}contains ${shellCount} of ${shellTarget} electrons.`,
             }
-          : shellCount < shellTarget
-            ? {
-                tone: "warn",
-                title: unpaired ? "Radical with incomplete shell" : "Incomplete valence shell",
-                text: `The actual outer occupied shell ${isIonic ? `(shell ${outerShell}) ` : ""}contains ${shellCount} of ${shellTarget} electrons.`,
-              }
-            : {
-                tone: "warn",
-                title: "Check this structure",
-                text: `The actual outer occupied shell contains ${shellCount} electrons, above its usual capacity of ${shellTarget}.`,
-              };
-  const resonance: Record<string, string> = {
-    LiO2: "Lithium superoxide is Li⁺[O₂]⁻. Lithium transfers one electron total; the −1 charge and unpaired electron are delocalized across the O–O unit. A charge drawn on one oxygen is only one resonance bookkeeping form.",
-    O3: "Ozone is a resonance hybrid: the π bonding is delocalized, so its two O–O bonds are equivalent overall.",
-    O2S: "Sulfur dioxide is described by resonance contributors; electron density is delocalized across both S–O bonds.",
-    O3S: "Sulfur trioxide has three equivalent S–O bonds in its resonance description.",
-    C6H6: "Benzene’s six π electrons are delocalized around the ring; alternating drawings are resonance contributors.",
-  };
-  const molecularDipoles: Record<string, string> = {
-    CO2: "The two equal C=O bond dipoles point in opposite directions and cancel, so CO₂ is nonpolar overall.",
-    H2O: "The bent shape prevents the O–H bond dipoles from cancelling, so water has a net dipole.",
-    CH4: "The tetrahedral C–H bond dipoles cancel by symmetry, so methane is nonpolar overall.",
-    H3N: "The trigonal-pyramidal shape leaves ammonia with a net dipole toward nitrogen.",
-    O2S: "The bent shape leaves sulfur dioxide with a net molecular dipole.",
-    O3S: "The three S–O bond dipoles cancel in trigonal-planar SO₃.",
-  };
+          : {
+              tone: "warn",
+              title: "Check this structure",
+              text: `The actual outer occupied shell contains ${shellCount} electrons, above its usual capacity of ${shellTarget}.`,
+            };
   const polarBonds = covalent
     .map((bond) => {
       const partner = atoms.find(
@@ -3076,9 +3313,6 @@ function AtomLearning({
               : "Create a covalent bond to compare electronegativity."}
           </p>
         )}
-        {molecularDipoles[signature] && (
-          <p className="dipole-note">{molecularDipoles[signature]}</p>
-        )}
       </section>
       <section>
         <h2>Stability check</h2>
@@ -3089,14 +3323,15 @@ function AtomLearning({
       </section>
       <section>
         <h2>Resonance & octet exceptions</h2>
-        {resonance[signature] ? (
-          <p className="resonance-note">{resonance[signature]}</p>
-        ) : exception ? (
+        {exception ? (
           <p className="resonance-note">
             {exception}. The octet rule is a useful pattern, not a universal law.
           </p>
         ) : (
-          <p>No common resonance or octet exception is detected for this local structure.</p>
+          <p>
+            No local octet exception is detected. Compound-specific resonance claims are not
+            inferred from a small formula lookup table.
+          </p>
         )}
       </section>
     </>

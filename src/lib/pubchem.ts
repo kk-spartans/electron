@@ -25,6 +25,7 @@ export type StructureResult = {
   error?: string;
   candidates?: StructureCandidate[];
 };
+export type CompoundFacts = { ph: string[]; reactivity: string[] };
 
 const MAX_AGE = 1000 * 60 * 60 * 24 * 7;
 
@@ -53,6 +54,61 @@ async function pubchem(path: string) {
     if (response.status < 500 && response.status !== 429) break;
   }
   throw new Error(`PubChem returned ${lastStatus}`);
+}
+
+async function pubchemView(cid: number) {
+  const key = `electron:pubchem-view:${cid}`;
+  try {
+    const cached = localStorage.getItem(key);
+    if (cached) {
+      const parsed = JSON.parse(cached) as { stored: number; data: unknown };
+      if (Date.now() - parsed.stored < MAX_AGE) return parsed.data;
+    }
+  } catch {}
+  const response = await fetch(
+    `https://pubchem.ncbi.nlm.nih.gov/rest/pug_view/data/compound/${cid}/JSON`,
+    { headers: { Accept: "application/json" } },
+  );
+  if (!response.ok) throw new Error(`PubChem PUG View returned ${response.status}`);
+  const data = await response.json();
+  try {
+    localStorage.setItem(key, JSON.stringify({ stored: Date.now(), data }));
+  } catch {}
+  return data;
+}
+
+function sectionStrings(
+  value: unknown,
+  path: string[] = [],
+): Array<{ path: string; text: string }> {
+  if (typeof value === "string") return [{ path: path.join(" › "), text: value }];
+  if (Array.isArray(value)) return value.flatMap((item) => sectionStrings(item, path));
+  if (!value || typeof value !== "object") return [];
+  const record = value as Record<string, unknown>;
+  const heading = typeof record.TOCHeading === "string" ? record.TOCHeading : undefined;
+  return Object.entries(record).flatMap(([key, item]) =>
+    sectionStrings(item, heading ? [...path, heading] : key === "Section" ? path : path),
+  );
+}
+
+export async function lookupCompoundFacts(cid: number): Promise<CompoundFacts> {
+  try {
+    const view = await pubchemView(cid);
+    const strings = sectionStrings(view);
+    const unique = (items: string[]) => [
+      ...new Set(items.map((item) => item.trim()).filter(Boolean)),
+    ];
+    return {
+      ph: unique(
+        strings.filter((item) => /\bpH\b/i.test(item.path)).map((item) => item.text),
+      ).slice(0, 3),
+      reactivity: unique(
+        strings.filter((item) => /reactiv|reaction/i.test(item.path)).map((item) => item.text),
+      ).slice(0, 3),
+    };
+  } catch {
+    return { ph: [], reactivity: [] };
+  }
 }
 
 export async function lookupStructure(query: string): Promise<StructureResult> {

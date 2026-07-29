@@ -1,3 +1,10 @@
+## [1.1.1](https://github.com/kk-spartans/electron/compare/v1.1.0...v1.1.1) (2026-07-29)
+
+
+### Bug Fixes
+
+* correct reaction balancing and spawning ([93420b6](https://github.com/kk-spartans/electron/commit/93420b63a8168a2dfc48ece66e86d30f16551e47))
+
 # [1.1.0](https://github.com/kk-spartans/electron/compare/v1.0.0...v1.1.0) (2026-07-29)
 
 ### Features

@@ -1,3 +1,10 @@
+## [1.1.3](https://github.com/kk-spartans/electron/compare/v1.1.2...v1.1.3) (2026-07-29)
+
+
+### Bug Fixes
+
+* make proximity reactions responsive ([efd725f](https://github.com/kk-spartans/electron/commit/efd725f5616482ae886db216555eaaff7d913b05))
+
 ## [1.1.2](https://github.com/kk-spartans/electron/compare/v1.1.1...v1.1.2) (2026-07-29)
 
 ### Bug Fixes

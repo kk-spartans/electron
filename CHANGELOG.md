@@ -1,9 +1,8 @@
 ## [1.1.2](https://github.com/kk-spartans/electron/compare/v1.1.1...v1.1.2) (2026-07-29)
 
-
 ### Bug Fixes
 
-* restore canvas selection and history ([d015823](https://github.com/kk-spartans/electron/commit/d015823e59e15a25333b999b57d8b797e668f6e6))
+- restore canvas selection and history ([d015823](https://github.com/kk-spartans/electron/commit/d015823e59e15a25333b999b57d8b797e668f6e6))
 
 ## [1.1.1](https://github.com/kk-spartans/electron/compare/v1.1.0...v1.1.1) (2026-07-29)
 

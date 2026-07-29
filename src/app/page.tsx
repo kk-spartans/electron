@@ -88,6 +88,7 @@ type CanvasFileHandle = {
 };
 
 const canvasFileExtension = ".electron";
+const reactionChoiceCache = new Map<string, Promise<ReactionRecipe[]>>();
 
 function sameHistorySnapshot(first: HistorySnapshot, second: HistorySnapshot) {
   return JSON.stringify(first) === JSON.stringify(second);
@@ -491,6 +492,7 @@ export default function Home() {
   const [selectedMolecule, setSelectedMolecule] = useState<number | null>(null);
   const [compressedGroups, setCompressedGroups] = useState<Set<number>>(() => new Set());
   const [reactionChoices, setReactionChoices] = useState<ReactionRecipe[]>([]);
+  const [reactionSearching, setReactionSearching] = useState(false);
   const reactionPairRef = useRef<{
     first: MoleculeEntity;
     second: MoleculeEntity;
@@ -792,17 +794,30 @@ export default function Home() {
     let current = true;
     setReactionChoices([]);
     reactionPairRef.current = null;
+    setReactionSearching(nearbyReactantPairs.length > 0 && !preparedReaction);
     if (!nearbyReactantPairs.length || preparedReaction) return;
     const discover = async () => {
       for (const pair of nearbyReactantPairs) {
-        const routes = await discoverReactionChoices(pair.first, pair.second);
+        const key = [pair.first.cid ?? pair.first.formula, pair.second.cid ?? pair.second.formula]
+          .map(String)
+          .sort()
+          .join("|");
+        let pending = reactionChoiceCache.get(key);
+        if (!pending) {
+          pending = discoverReactionChoices(pair.first, pair.second);
+          reactionChoiceCache.set(key, pending);
+        }
+        const routes = await pending;
+        if (!routes.length) reactionChoiceCache.delete(key);
         if (!current) return;
         if (routes.length) {
           reactionPairRef.current = pair;
           setReactionChoices(routes);
+          setReactionSearching(false);
           return;
         }
       }
+      if (current) setReactionSearching(false);
     };
     void discover();
     return () => {
@@ -2069,14 +2084,22 @@ export default function Home() {
               />
             )}
             {validationNotice && <output className="validation-notice">{validationNotice}</output>}
-            {(preparedReaction || reactionChoices.length > 0) && (
+            {(preparedReaction || reactionChoices.length > 0 || reactionSearching) && (
               <div className="reaction-prompt" onPointerDown={(event) => event.stopPropagation()}>
                 <header>
-                  <small>{preparedReaction ? "Balanced on canvas" : "Possible reactions"}</small>
+                  <small>
+                    {preparedReaction
+                      ? "Balanced on canvas"
+                      : reactionSearching
+                        ? "Checking PubChem"
+                        : "Possible reactions"}
+                  </small>
                   <strong>
                     {preparedReaction
                       ? "The required reactants are now present."
-                      : "Choose the route and conditions."}
+                      : reactionSearching
+                        ? "Looking for reported products and balancing the equation…"
+                        : "Choose the route and conditions."}
                   </strong>
                 </header>
                 <div className="reaction-options">
@@ -3442,7 +3465,7 @@ async function discoverReactionChoices(first: MoleculeEntity, second: MoleculeEn
   if (!facts.length) return [];
 
   const queries = new Set<string>();
-  facts.forEach((text) => {
+  facts.slice(0, 6).forEach((text) => {
     for (const match of text.matchAll(/\b(?:[A-Z][a-z]?\d*){1,8}\b/g)) {
       const formula = match[0];
       if (validFormula(formula) && formula !== first.formula && formula !== second.formula)
@@ -3455,7 +3478,7 @@ async function discoverReactionChoices(first: MoleculeEntity, second: MoleculeEn
   });
 
   const resolvedCandidates = await Promise.all(
-    [...queries].slice(0, 18).map(async (query) => {
+    [...queries].slice(0, 8).map(async (query) => {
       const result = await lookupStructure(query);
       if (result.record) return result.record;
       const alternatives = await Promise.all(

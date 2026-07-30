@@ -2242,7 +2242,10 @@ export default function Home() {
               reactionChoices.length > 0 ||
               reactionSearching ||
               reactionSearchEmpty) && (
-              <div className="reaction-prompt" onPointerDown={(event) => event.stopPropagation()}>
+              <div
+                className={`reaction-prompt${reactionSearchEmpty ? " is-empty" : ""}`}
+                onPointerDown={(event) => event.stopPropagation()}
+              >
                 <header>
                   <small>
                     {preparedReaction

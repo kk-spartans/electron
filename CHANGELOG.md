@@ -1,9 +1,8 @@
 # [1.2.0](https://github.com/kk-spartans/electron/compare/v1.1.5...v1.2.0) (2026-07-30)
 
-
 ### Features
 
-* persist canvas autosaves in OPFS ([3671c5b](https://github.com/kk-spartans/electron/commit/3671c5b6acd1f9e67d15f90a0b684ea653a3019b))
+- persist canvas autosaves in OPFS ([3671c5b](https://github.com/kk-spartans/electron/commit/3671c5b6acd1f9e67d15f90a0b684ea653a3019b))
 
 ## [1.1.5](https://github.com/kk-spartans/electron/compare/v1.1.4...v1.1.5) (2026-07-30)
 

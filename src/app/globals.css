@@ -426,17 +426,16 @@ button {
 .bond-toolbar {
   position: absolute;
   z-index: 8;
-  top: 14px;
-  left: 50%;
-  transform: translateX(-50%);
+  top: 0;
+  right: 0;
+  left: 0;
   display: flex;
   align-items: center;
-  gap: 4px;
-  padding: 4px;
-  border: 1px solid var(--line);
-  background: #11111bf2;
-  border-radius: 10px;
-  box-shadow: 0 14px 36px #0009;
+  gap: 6px;
+  min-height: 52px;
+  padding: 7px 12px;
+  border-bottom: 1px solid var(--line);
+  background: transparent;
 }
 .bond-toolbar button {
   border: 0;
@@ -477,9 +476,8 @@ button {
 .reaction-prompt {
   position: absolute;
   z-index: 12;
-  top: 72px;
-  left: 50%;
-  transform: translateX(-50%);
+  top: 64px;
+  left: 14px;
   display: flex;
   align-items: stretch;
   gap: 10px;
@@ -491,6 +489,9 @@ button {
   border-radius: 10px;
   background: #11111bf2;
   box-shadow: 0 16px 42px #000a;
+}
+.reaction-prompt.is-empty {
+  width: min(370px, calc(100% - 28px));
 }
 .reaction-prompt header {
   display: grid;
@@ -2025,10 +2026,13 @@ button {
     display: block;
   }
   .bond-toolbar {
-    top: 9px;
-    max-width: calc(100% - 16px);
+    min-height: 48px;
+    padding: 5px 8px;
+  }
+  .reaction-prompt {
+    top: 58px;
     left: 8px;
-    transform: none;
+    width: calc(100% - 16px);
   }
   .canvas-atom {
     width: 170px;

@@ -1,3 +1,10 @@
+## [1.1.5](https://github.com/kk-spartans/electron/compare/v1.1.4...v1.1.5) (2026-07-30)
+
+
+### Bug Fixes
+
+* generalize reaction discovery and canvas guidance ([84c2763](https://github.com/kk-spartans/electron/commit/84c2763bbdfdc1bf28f9e89b09dc7353ef955ea8))
+
 ## [1.1.4](https://github.com/kk-spartans/electron/compare/v1.1.3...v1.1.4) (2026-07-29)
 
 ### Bug Fixes

@@ -7,11 +7,10 @@
 
 # [1.3.0](https://github.com/kk-spartans/electron/compare/v1.2.0...v1.3.0) (2026-07-30)
 
-
 ### Features
 
-* add multi-source reaction index ([4c11d45](https://github.com/kk-spartans/electron/commit/4c11d4522f5924bab59e27cac2ceace20e4235d6))
-* improve chemistry canvas interactions ([60ab9c3](https://github.com/kk-spartans/electron/commit/60ab9c3a77a70f8ef6f715282cf488c4a3bcc9a6))
+- add multi-source reaction index ([4c11d45](https://github.com/kk-spartans/electron/commit/4c11d4522f5924bab59e27cac2ceace20e4235d6))
+- improve chemistry canvas interactions ([60ab9c3](https://github.com/kk-spartans/electron/commit/60ab9c3a77a70f8ef6f715282cf488c4a3bcc9a6))
 
 # [1.2.0](https://github.com/kk-spartans/electron/compare/v1.1.5...v1.2.0) (2026-07-30)
 

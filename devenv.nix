@@ -47,10 +47,6 @@ in
     language = "system";
   };
 
-  enterShell = ''
-    bun run prepare:app
-  '';
-
   tasks = {
     "electron:check".exec = "bun run devops/check.ts";
     "electron:dev".exec = "bun run dev";

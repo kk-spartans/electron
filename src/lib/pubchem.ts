@@ -30,6 +30,7 @@ export type StructureResult = {
 export type CompoundFacts = { ph: string[]; reactivity: string[] };
 
 const MAX_AGE = 1000 * 60 * 60 * 24 * 7;
+const pubchemViewCache = new Map<number, Promise<unknown>>();
 
 function retryDelay(response: Response, attempt: number) {
   const retryAfter = Number(response.headers.get("retry-after"));
@@ -68,33 +69,30 @@ async function pubchem(path: string) {
 }
 
 async function pubchemView(cid: number) {
-  const key = `electron:pubchem-view:${cid}`;
+  const cached = pubchemViewCache.get(cid);
+  if (cached) return cached;
+  const request = (async () => {
+    let lastStatus = 502;
+    for (let attempt = 0; attempt < 4; attempt++) {
+      const response = await fetch(
+        `https://pubchem.ncbi.nlm.nih.gov/rest/pug_view/data/compound/${cid}/JSON`,
+        { headers: { Accept: "application/json" } },
+      );
+      if (response.ok) return response.json();
+      lastStatus = response.status;
+      if (response.status < 500 && response.status !== 429) break;
+      if (attempt < 3)
+        await new Promise((resolve) => window.setTimeout(resolve, retryDelay(response, attempt)));
+    }
+    throw new Error(`PubChem PUG View returned ${lastStatus}`);
+  })();
+  pubchemViewCache.set(cid, request);
   try {
-    const cached = localStorage.getItem(key);
-    if (cached) {
-      const parsed = JSON.parse(cached) as { stored: number; data: unknown };
-      if (Date.now() - parsed.stored < MAX_AGE) return parsed.data;
-    }
-  } catch {}
-  let lastStatus = 502;
-  for (let attempt = 0; attempt < 4; attempt++) {
-    const response = await fetch(
-      `https://pubchem.ncbi.nlm.nih.gov/rest/pug_view/data/compound/${cid}/JSON`,
-      { headers: { Accept: "application/json" } },
-    );
-    if (response.ok) {
-      const data = await response.json();
-      try {
-        localStorage.setItem(key, JSON.stringify({ stored: Date.now(), data }));
-      } catch {}
-      return data;
-    }
-    lastStatus = response.status;
-    if (response.status < 500 && response.status !== 429) break;
-    if (attempt < 3)
-      await new Promise((resolve) => window.setTimeout(resolve, retryDelay(response, attempt)));
+    return await request;
+  } catch (error) {
+    pubchemViewCache.delete(cid);
+    throw error;
   }
-  throw new Error(`PubChem PUG View returned ${lastStatus}`);
 }
 
 function sectionStrings(
@@ -120,7 +118,9 @@ export async function lookupCompoundFacts(cid: number): Promise<CompoundFacts> {
     ];
     return {
       ph: unique(
-        strings.filter((item) => /\bpH\b/i.test(item.path)).map((item) => item.text),
+        strings
+          .filter((item) => /\bpH\b/i.test(item.path) || /\bpH\s*[:=]/i.test(item.text))
+          .map((item) => item.text),
       ).slice(0, 3),
       reactivity: unique(
         strings.filter((item) => /reactiv|reaction/i.test(item.path)).map((item) => item.text),
@@ -137,7 +137,7 @@ export async function lookupCompoundFacts(cid: number): Promise<CompoundFacts> {
               Number(/reacts? with|to form|forming|produces?|releases?|decomposes?/i.test(first)) ||
             first.length - second.length,
         )
-        .slice(0, 30),
+        .slice(0, 100),
     };
   } catch {
     return { ph: [], reactivity: [] };

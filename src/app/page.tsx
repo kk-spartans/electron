@@ -54,14 +54,25 @@ type MoleculeEntity = {
   atomIds: number[];
   x: number;
   y: number;
+  isCompound: boolean;
   cid?: number;
   name?: string;
+};
+
+type RecognizedCompound = {
+  signature: string;
+  atomIds: number[];
+  formula: string;
+  name: string;
+  cid?: number;
 };
 
 type PreparedReaction = {
   key: string;
   recipe: ReactionRecipe;
   atomIds: number[];
+  originalAtomIds: number[];
+  spawnedAtomIds: number[];
   center: { x: number; y: number };
 };
 
@@ -71,6 +82,8 @@ type HistorySnapshot = {
   formulaGroups: FormulaGroup[];
   compressedGroupIds: number[];
 };
+
+type CanvasClipboard = HistorySnapshot;
 
 type CanvasDocument = {
   version: 1;
@@ -93,6 +106,7 @@ const localCanvasKey = "electron:canvas";
 const opfsCanvasFileName = "electron-autosave.electron";
 const canvasNavigationHintKey = "electron:canvas-navigation-hint-seen";
 const reactionChoiceCache = new Map<string, Promise<ReactionRecipe[]>>();
+const structureRecognitionCache = new Map<string, Promise<StructureRecord | undefined>>();
 
 function sameHistorySnapshot(first: HistorySnapshot, second: HistorySnapshot) {
   return JSON.stringify(first) === JSON.stringify(second);
@@ -397,7 +411,20 @@ function applyIonicCharges(atomList: AtomNode[], bondList: BondEdge[]) {
     .forEach((bond) => {
       const from = atomList.find((atom) => atom.id === bond.from),
         to = atomList.find((atom) => atom.id === bond.to);
-      if (!from || !to || metals.has(from.element) === metals.has(to.element)) return;
+      if (!from || !to) return;
+      const halogens = ["F", "Cl", "Br", "I", "At", "Ts"];
+      if (
+        !metals.has(from.element) &&
+        !metals.has(to.element) &&
+        (halogens.includes(from.element) || halogens.includes(to.element))
+      ) {
+        const receiver = halogens.includes(from.element) ? from : to;
+        const donor = receiver === from ? to : from;
+        charges.set(donor.id, (charges.get(donor.id) ?? 0) + bond.order);
+        charges.set(receiver.id, (charges.get(receiver.id) ?? 0) - bond.order);
+        return;
+      }
+      if (metals.has(from.element) === metals.has(to.element)) return;
       const donor = metals.has(from.element) ? from : to,
         receiver = donor === from ? to : from;
       charges.set(donor.id, (charges.get(donor.id) ?? 0) + bond.order);
@@ -530,11 +557,15 @@ export default function Home() {
   const [valenceFilter, setValenceFilter] = useState("all");
   const [characterFilter, setCharacterFilter] = useState("all");
   const [formulaGroups, setFormulaGroups] = useState<FormulaGroup[]>([]);
+  const [recognizedCompounds, setRecognizedCompounds] = useState<RecognizedCompound[]>([]);
   const [selectedMolecule, setSelectedMolecule] = useState<number | null>(null);
   const [compressedGroups, setCompressedGroups] = useState<Set<number>>(() => new Set());
   const [reactionChoices, setReactionChoices] = useState<ReactionRecipe[]>([]);
   const [reactionSearching, setReactionSearching] = useState(false);
   const [reactionSearchEmpty, setReactionSearchEmpty] = useState(false);
+  const [ionicElectronTransfers, setIonicElectronTransfers] = useState<
+    Array<{ id: number; from: AtomNode; to: AtomNode }>
+  >([]);
   const [reactionCandidate, setReactionCandidate] = useState<{
     key: string;
     pairs: Array<{ first: MoleculeEntity; second: MoleculeEntity; distance: number }>;
@@ -545,6 +576,9 @@ export default function Home() {
   } | null>(null);
   const [preparedReaction, setPreparedReaction] = useState<PreparedReaction | null>(null);
   const [validationNotice, setValidationNotice] = useState("");
+  const validationNoticePresence = useAnimatedPresence(Boolean(validationNotice), 400);
+  const lastValidationNotice = useRef("");
+  if (validationNotice) lastValidationNotice.current = validationNotice;
   const [canvasNavigationHint, setCanvasNavigationHint] = useState(false);
   const canvasNavigationHintShown = useRef(false);
   const [selectionBox, setSelectionBox] = useState<{
@@ -575,6 +609,8 @@ export default function Home() {
   const redoStack = useRef<HistorySnapshot[]>([]);
   const historyTimer = useRef<number | null>(null);
   const applyingHistory = useRef(false);
+  const canvasClipboard = useRef<CanvasClipboard | null>(null);
+  const pasteCount = useRef(0);
   const geometryAnimation = useRef<number | null>(null);
   const gesture = useRef<
     | { type: "pan"; sx: number; sy: number; ox: number; oy: number }
@@ -800,7 +836,127 @@ export default function Home() {
     return () => window.clearTimeout(timeout);
   }, [canvasNavigationHint]);
 
-  // Compound identities and names come from PubChem-backed formula groups.
+  const recognitionSignature = useMemo(() => {
+    const claimed = new Set(formulaGroups.flatMap((group) => group.atomIds));
+    return JSON.stringify({
+      atoms: atoms
+        .filter((atom) => !claimed.has(atom.id))
+        .map(({ id, element, charge }) => ({ id, element, charge }))
+        .sort((first, second) => first.id - second.id),
+      bonds: bonds
+        .filter(
+          (bond) => bond.type === "covalent" && !claimed.has(bond.from) && !claimed.has(bond.to),
+        )
+        .map(({ from, to, order }) => ({
+          from: Math.min(from, to),
+          to: Math.max(from, to),
+          order,
+        }))
+        .sort((first, second) => first.from - second.from || first.to - second.to),
+    });
+  }, [atoms, bonds, formulaGroups]);
+  useEffect(() => {
+    let current = true;
+    const timeout = window.setTimeout(() => {
+      const recognize = async () => {
+        const claimed = new Set(formulaGroupsRef.current.flatMap((group) => group.atomIds));
+        const availableAtoms = atomsRef.current.filter((atom) => !claimed.has(atom.id));
+        const availableById = new Map(availableAtoms.map((atom) => [atom.id, atom]));
+        const availableBonds = bondsRef.current.filter(
+          (bond) =>
+            bond.type === "covalent" && availableById.has(bond.from) && availableById.has(bond.to),
+        );
+        const adjacency = new Map<number, number[]>();
+        availableBonds.forEach((bond) => {
+          adjacency.set(bond.from, [...(adjacency.get(bond.from) ?? []), bond.to]);
+          adjacency.set(bond.to, [...(adjacency.get(bond.to) ?? []), bond.from]);
+        });
+        const visited = new Set<number>();
+        const components: Array<{ atoms: AtomNode[]; bonds: BondEdge[]; signature: string }> = [];
+        for (const atom of availableAtoms) {
+          if (visited.has(atom.id) || !adjacency.has(atom.id)) continue;
+          const ids: number[] = [];
+          const stack = [atom.id];
+          while (stack.length) {
+            const id = stack.pop()!;
+            if (visited.has(id)) continue;
+            visited.add(id);
+            ids.push(id);
+            (adjacency.get(id) ?? []).forEach((neighbor) => stack.push(neighbor));
+          }
+          const idSet = new Set(ids);
+          const componentAtoms = ids.map((id) => availableById.get(id)!);
+          const componentBonds = availableBonds.filter(
+            (bond) => idSet.has(bond.from) && idSet.has(bond.to),
+          );
+          components.push({
+            atoms: componentAtoms,
+            bonds: componentBonds,
+            signature: `${ids.sort((first, second) => first - second).join(",")}:${componentBonds
+              .map(
+                (bond) =>
+                  `${Math.min(bond.from, bond.to)}-${Math.max(bond.from, bond.to)}-${bond.order}`,
+              )
+              .sort()
+              .join(",")}`,
+          });
+        }
+        const recognized = (
+          await Promise.all(
+            components.map(async (component): Promise<RecognizedCompound | null> => {
+              const validation = await validateStructure(component.atoms, component.bonds);
+              if (!validation.valid || !validation.canonicalSmiles) return null;
+              let pending = structureRecognitionCache.get(validation.canonicalSmiles);
+              if (!pending) {
+                pending = lookupStructure(`smiles:${validation.canonicalSmiles}`).then(
+                  (result) => result.record,
+                );
+                structureRecognitionCache.set(validation.canonicalSmiles, pending);
+              }
+              const record = await pending;
+              if (!record?.cid) {
+                structureRecognitionCache.delete(validation.canonicalSmiles);
+                return null;
+              }
+              const explicitCounts = component.atoms.reduce<Record<string, number>>(
+                (counts, atom) => {
+                  counts[atom.element] = (counts[atom.element] ?? 0) + 1;
+                  return counts;
+                },
+                {},
+              );
+              const reportedCounts = formulaCounts(record.formula);
+              const elementsInEither = new Set([
+                ...Object.keys(explicitCounts),
+                ...Object.keys(reportedCounts),
+              ]);
+              if (
+                [...elementsInEither].some(
+                  (element) => (explicitCounts[element] ?? 0) !== (reportedCounts[element] ?? 0),
+                )
+              )
+                return null;
+              return {
+                signature: component.signature,
+                atomIds: component.atoms.map((atom) => atom.id),
+                formula: record.formula,
+                name: record.name,
+                cid: record.cid,
+              };
+            }),
+          )
+        ).filter((compound): compound is RecognizedCompound => Boolean(compound));
+        if (current) setRecognizedCompounds(recognized);
+      };
+      void recognize();
+    }, 280);
+    return () => {
+      current = false;
+      window.clearTimeout(timeout);
+    };
+  }, [recognitionSignature]);
+
+  // Spawned and hand-built compound identities both come from PubChem.
   const namedCompounds = useMemo<
     Array<{
       formula: string;
@@ -808,8 +964,25 @@ export default function Home() {
       atomIds: number[];
       x: number;
       y: number;
+      cid?: number;
     }>
-  >(() => [], []);
+  >(
+    () =>
+      recognizedCompounds.flatMap((compound) => {
+        const members = compound.atomIds
+          .map((id) => atomById.get(id))
+          .filter((atom): atom is AtomNode => Boolean(atom));
+        if (members.length !== compound.atomIds.length) return [];
+        return [
+          {
+            ...compound,
+            x: members.reduce((sum, atom) => sum + atom.x, 0) / members.length,
+            y: Math.max(...members.map((atom) => atom.y)) + 125,
+          },
+        ];
+      }),
+    [atomById, recognizedCompounds],
+  );
   const activeMolecule =
     formulaGroups.find((group) => group.id === selectedMolecule) ??
     namedCompounds
@@ -819,6 +992,7 @@ export default function Home() {
         atomIds: compound.atomIds,
         formula: compound.formula,
         name: compound.name,
+        cid: compound.cid,
         source: "canvas structure",
       }))[0];
 
@@ -837,6 +1011,7 @@ export default function Home() {
           atomIds: group.atomIds,
           x: members.reduce((sum, atom) => sum + atom.x, 0) / members.length,
           y: members.reduce((sum, atom) => sum + atom.y, 0) / members.length,
+          isCompound: true,
           cid: group.cid,
           name: group.name,
         },
@@ -852,42 +1027,93 @@ export default function Home() {
           atomIds: compound.atomIds,
           x: compound.x,
           y: compound.y - 125,
+          isCompound: true,
+          cid: compound.cid,
+          name: compound.name,
         },
       ];
     });
     const singles = atoms
-      .filter((atom) => !claimed.has(atom.id))
+      .filter(
+        (atom) =>
+          !claimed.has(atom.id) &&
+          !bonds.some((bond) => bond.from === atom.id || bond.to === atom.id),
+      )
       .map((atom) => ({
         id: -1_000_000 - atom.id,
         formula: atom.element,
         atomIds: [atom.id],
         x: atom.x,
         y: atom.y,
+        isCompound: true,
         name: elements[atom.element].name,
       }));
     return [...groups, ...known, ...singles];
-  }, [atomById, atoms, formulaGroups, namedCompounds]);
+  }, [atomById, atoms, bonds, formulaGroups, namedCompounds]);
 
-  const nearbyReactantPairs = useMemo(() => {
+  const isolatedElementEntities = useMemo(
+    () =>
+      moleculeEntities.filter((entity) => entity.atomIds.length === 1 && entity.id <= -1_000_000),
+    [moleculeEntities],
+  );
+
+  const selectedReactants = useMemo(() => {
+    const selectedIds = new Set(selected);
+    return moleculeEntities.filter(
+      (entity) =>
+        entity.isCompound &&
+        entity.atomIds.length > 0 &&
+        entity.atomIds.every((atomId) => selectedIds.has(atomId)),
+    );
+  }, [moleculeEntities, selected]);
+
+  const selectedReactantPairs = useMemo(() => {
     const pairs: Array<{
       first: MoleculeEntity;
       second: MoleculeEntity;
       distance: number;
     }> = [];
-    for (let firstIndex = 0; firstIndex < moleculeEntities.length; firstIndex++) {
-      for (let secondIndex = firstIndex + 1; secondIndex < moleculeEntities.length; secondIndex++) {
-        const first = moleculeEntities[firstIndex],
-          second = moleculeEntities[secondIndex],
+    for (let firstIndex = 0; firstIndex < selectedReactants.length; firstIndex++) {
+      for (
+        let secondIndex = firstIndex + 1;
+        secondIndex < selectedReactants.length;
+        secondIndex++
+      ) {
+        const first = selectedReactants[firstIndex],
+          second = selectedReactants[secondIndex],
           distance = Math.hypot(first.x - second.x, first.y - second.y);
-        if (distance <= 620) pairs.push({ first, second, distance });
+        pairs.push({ first, second, distance });
       }
     }
     return pairs.sort((first, second) => first.distance - second.distance);
-  }, [moleculeEntities]);
+  }, [selectedReactants]);
+
+  const reactionContextEntities =
+    reactionPairRef.current
+      ? [reactionPairRef.current.first, reactionPairRef.current.second]
+      : reactionCandidate?.pairs[0]
+        ? [reactionCandidate.pairs[0].first, reactionCandidate.pairs[0].second]
+        : selectedReactants;
+
+  const reactionMenuPosition = useMemo(() => {
+    if (!reactionContextEntities.length) return undefined;
+    const x =
+      reactionContextEntities.reduce((sum, reactant) => sum + reactant.x, 0) /
+      reactionContextEntities.length;
+    const y = Math.max(...reactionContextEntities.map((reactant) => reactant.y));
+    return {
+      left: pan.x + x * scale,
+      top: pan.y + (y + 125) * scale + 104,
+    };
+  }, [pan.x, pan.y, reactionContextEntities, scale]);
+
+  const selectedReactantNames = reactionContextEntities
+    .map((reactant) => reactant.name || reactant.formula)
+    .join(" + ");
 
   useEffect(() => {
-    if (!nearbyReactantPairs.length || preparedReaction || reactionSearching) return;
-    const key = nearbyReactantPairs
+    if (!selectedReactantPairs.length || preparedReaction) return;
+    const key = selectedReactantPairs
       .map((pair) =>
         [pair.first.cid ?? pair.first.formula, pair.second.cid ?? pair.second.formula]
           .map(String)
@@ -896,11 +1122,28 @@ export default function Home() {
       )
       .join(",");
     setReactionCandidate((current) =>
-      current?.key === key || reactionChoices.length
-        ? current
-        : { key, pairs: nearbyReactantPairs },
+      current?.key === key ? current : { key, pairs: selectedReactantPairs },
     );
-  }, [nearbyReactantPairs, preparedReaction, reactionChoices.length, reactionSearching]);
+  }, [selectedReactantPairs, preparedReaction]);
+
+  useEffect(() => {
+    if (!reactionCandidate || preparedReaction) return;
+    const selectedIds = new Set(selected);
+    const originalReactantIds = new Set(
+      reactionCandidate.pairs.flatMap((pair) => [
+        ...pair.first.atomIds,
+        ...pair.second.atomIds,
+      ]),
+    );
+    if ([...originalReactantIds].every((atomId) => selectedIds.has(atomId))) return;
+    reactionPairRef.current = null;
+    setReactionCandidate(null);
+    setReactionChoices([]);
+    setReactionSearching(false);
+    setReactionSearchEmpty(false);
+  }, [preparedReaction, reactionCandidate, selected]);
+
+  const reactionSourceAtomIds = new Set(preparedReaction?.atomIds ?? []);
 
   useEffect(() => {
     let current = true;
@@ -975,6 +1218,17 @@ export default function Home() {
       const componentBonds = covalent.filter(
         (bond) => memberIds.has(bond.from) && memberIds.has(bond.to),
       );
+      const isIonicSpecies =
+        members.some((atom) => atom.charge !== 0) ||
+        bonds.some(
+          (bond) => bond.type === "ionic" && (memberIds.has(bond.from) || memberIds.has(bond.to)),
+        ) ||
+        formulaGroups.some(
+          (group) =>
+            group.atomIds.some((atomId) => memberIds.has(atomId)) &&
+            group.atomIds.some((atomId) => !memberIds.has(atomId)),
+        );
+      if (isIonicSpecies) return [];
       const polar = componentBonds.some((bond) => {
         const from = atomById.get(bond.from)!,
           to = atomById.get(bond.to)!;
@@ -1062,20 +1316,13 @@ export default function Home() {
         },
       ];
     });
-  }, [atomById, atoms, bonds]);
+  }, [atomById, atoms, bonds, formulaGroups]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const handleWheel = (event: WheelEvent) => {
       event.preventDefault();
-      if (!event.ctrlKey) {
-        setPan((current) => ({
-          x: current.x - event.deltaX,
-          y: current.y - event.deltaY,
-        }));
-        return;
-      }
       const box = canvas.getBoundingClientRect(),
         pointerX = event.clientX - box.left,
         pointerY = event.clientY - box.top;
@@ -1158,6 +1405,79 @@ export default function Home() {
     applyHistorySnapshot(next);
   }
 
+  function copySelection() {
+    const selectedIds = new Set(selected);
+    if (!selectedIds.size) return false;
+    const copiedAtoms = atomsRef.current.filter((atom) => selectedIds.has(atom.id));
+    if (!copiedAtoms.length) return false;
+    const copiedGroups = formulaGroupsRef.current.filter(
+      (group) =>
+        group.atomIds.length > 0 && group.atomIds.every((atomId) => selectedIds.has(atomId)),
+    );
+    canvasClipboard.current = structuredClone({
+      atoms: copiedAtoms,
+      bonds: bondsRef.current.filter(
+        (bond) => selectedIds.has(bond.from) && selectedIds.has(bond.to),
+      ),
+      formulaGroups: copiedGroups,
+      compressedGroupIds: copiedGroups
+        .filter((group) => compressedGroupsRef.current.has(group.id))
+        .map((group) => group.id),
+    });
+    pasteCount.current = 0;
+    return true;
+  }
+
+  function pasteSelection() {
+    const copied = canvasClipboard.current;
+    if (!copied?.atoms.length) return;
+    flushPendingHistory();
+    pasteCount.current += 1;
+    const offset = pasteCount.current * 150;
+    const atomIdMap = new Map<number, number>();
+    const pastedAtoms = copied.atoms.map((atom) => {
+      const id = nextId.current++;
+      atomIdMap.set(atom.id, id);
+      return { ...atom, id, x: atom.x + offset, y: atom.y + offset };
+    });
+    let nextBondId = Math.max(0, ...bondsRef.current.map((bond) => bond.id)) + 1;
+    const pastedBonds = copied.bonds.map((bond) => ({
+      ...bond,
+      id: nextBondId++,
+      from: atomIdMap.get(bond.from)!,
+      to: atomIdMap.get(bond.to)!,
+    }));
+    let nextGroupId = Math.max(0, ...formulaGroupsRef.current.map((group) => group.id)) + 1;
+    const groupIdMap = new Map<number, number>();
+    const pastedGroups = copied.formulaGroups.map((group) => {
+      const id = nextGroupId++;
+      groupIdMap.set(group.id, id);
+      return {
+        ...group,
+        id,
+        atomIds: group.atomIds.map((atomId) => atomIdMap.get(atomId)!),
+        source: "pasted copy",
+      };
+    });
+    atomsRef.current = [...atomsRef.current, ...pastedAtoms];
+    bondsRef.current = [...bondsRef.current, ...pastedBonds];
+    formulaGroupsRef.current = [...formulaGroupsRef.current, ...pastedGroups];
+    const nextCompressed = new Set(compressedGroupsRef.current);
+    copied.compressedGroupIds.forEach((groupId) => {
+      const pastedGroupId = groupIdMap.get(groupId);
+      if (pastedGroupId !== undefined) nextCompressed.add(pastedGroupId);
+    });
+    compressedGroupsRef.current = nextCompressed;
+    setAtoms(atomsRef.current);
+    setBonds(bondsRef.current);
+    setFormulaGroups(formulaGroupsRef.current);
+    setCompressedGroups(nextCompressed);
+    setSelected(pastedAtoms.map((atom) => atom.id));
+    setSelectedMolecule(pastedGroups.length === 1 ? pastedGroups[0].id : null);
+    setSelectedBond(null);
+    setSelectedElectron(null);
+  }
+
   useEffect(() => {
     const handleKey = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement;
@@ -1169,6 +1489,17 @@ export default function Home() {
         event.preventDefault();
         if (event.shiftKey) redo();
         else undo();
+        return;
+      }
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "c" && !isField) {
+        if (copySelection()) event.preventDefault();
+        return;
+      }
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "v" && !isField) {
+        if (canvasClipboard.current) {
+          event.preventDefault();
+          pasteSelection();
+        }
         return;
       }
       if (event.ctrlKey && !event.shiftKey && event.code === "Space") {
@@ -1249,6 +1580,12 @@ export default function Home() {
 
   function deleteAtoms(ids: number[]) {
     const removed = new Set(ids);
+    reactionPairRef.current = null;
+    setPreparedReaction(null);
+    setReactionCandidate(null);
+    setReactionChoices([]);
+    setReactionSearching(false);
+    setReactionSearchEmpty(false);
     const remainingBonds = bondsRef.current.filter(
       (bond) => !removed.has(bond.from) && !removed.has(bond.to),
     );
@@ -1308,12 +1645,23 @@ export default function Home() {
     const reactionPair = reactionPairRef.current;
     if (!reactionPair) return;
     const entities = [reactionPair.first, reactionPair.second];
-    const atomIds = entities.flatMap((entity) => entity.atomIds);
+    const liveAtomIds = new Set(atomsRef.current.map((atom) => atom.id));
+    if (entities.some((entity) => entity.atomIds.some((atomId) => !liveAtomIds.has(atomId)))) {
+      reactionPairRef.current = null;
+      setReactionCandidate(null);
+      setReactionChoices([]);
+      setReactionSearching(false);
+      setReactionSearchEmpty(false);
+      return;
+    }
+    const originalAtomIds = entities.flatMap((entity) => entity.atomIds);
+    const spawnedAtomIds: number[] = [];
     let copyIndex = 1;
     recipe.reactants.forEach((reactant, index) => {
       for (let copy = 1; copy < reactant.coefficient; copy++)
-        atomIds.push(...cloneEntity(entities[index], copyIndex++));
+        spawnedAtomIds.push(...cloneEntity(entities[index], copyIndex++));
     });
+    const atomIds = [...originalAtomIds, ...spawnedAtomIds];
     const center = {
       x: (reactionPair.first.x + reactionPair.second.x) / 2,
       y: (reactionPair.first.y + reactionPair.second.y) / 2,
@@ -1322,11 +1670,37 @@ export default function Home() {
       key: reactionEquation(recipe),
       recipe,
       atomIds,
+      originalAtomIds,
+      spawnedAtomIds,
       center,
     };
     setPreparedReaction(prepared);
     setSelected(atomIds);
     return prepared;
+  }
+
+  function cancelPreparedReaction() {
+    if (!preparedReaction) return;
+    const removed = new Set(preparedReaction.spawnedAtomIds);
+    if (removed.size) {
+      const remainingBonds = bondsRef.current.filter(
+        (bond) => !removed.has(bond.from) && !removed.has(bond.to),
+      );
+      const remainingAtoms = applyIonicCharges(
+        atomsRef.current.filter((atom) => !removed.has(atom.id)),
+        remainingBonds,
+      );
+      bondsRef.current = remainingBonds;
+      atomsRef.current = remainingAtoms;
+      formulaGroupsRef.current = formulaGroupsRef.current.filter(
+        (group) => !group.atomIds.some((atomId) => removed.has(atomId)),
+      );
+      setAtoms(remainingAtoms);
+      setBonds(remainingBonds);
+      setFormulaGroups(formulaGroupsRef.current);
+    }
+    setPreparedReaction(null);
+    setSelected(preparedReaction.originalAtomIds);
   }
 
   async function runReaction(prepared = preparedReaction) {
@@ -1352,10 +1726,27 @@ export default function Home() {
   }
 
   function toggleCompressed(groupId: number) {
+    if (!formulaGroupsRef.current.some((group) => group.id === groupId)) {
+      const recognized = namedCompounds.find(
+        (compound) => -Math.min(...compound.atomIds) === groupId,
+      );
+      if (!recognized) return;
+      const group: FormulaGroup = {
+        id: groupId,
+        atomIds: recognized.atomIds,
+        formula: recognized.formula,
+        name: recognized.name,
+        cid: recognized.cid,
+        source: "canvas structure",
+      };
+      formulaGroupsRef.current = [...formulaGroupsRef.current, group];
+      setFormulaGroups(formulaGroupsRef.current);
+    }
     setCompressedGroups((current) => {
       const next = new Set(current);
       if (next.has(groupId)) next.delete(groupId);
       else next.add(groupId);
+      compressedGroupsRef.current = next;
       return next;
     });
   }
@@ -1572,6 +1963,102 @@ export default function Home() {
           },
         ];
       });
+      const hydrohalideBonds = createdBonds.filter((bond) => {
+        const from = atomById.get(bond.from),
+          to = atomById.get(bond.to);
+        return (
+          bond.type === "covalent" &&
+          ((from?.element === "H" && ["F", "Cl", "Br", "I"].includes(to?.element ?? "")) ||
+            (to?.element === "H" && ["F", "Cl", "Br", "I"].includes(from?.element ?? "")))
+        );
+      });
+      for (const acidBond of hydrohalideBonds) {
+        const first = atomById.get(acidBond.from)!,
+          second = atomById.get(acidBond.to)!,
+          hydrogen = first.element === "H" ? first : second,
+          halide = hydrogen === first ? second : first;
+        const candidates = created
+          .filter(
+            (atom) =>
+              atom.id !== hydrogen.id &&
+              atom.id !== halide.id &&
+              ["N", "P", "O", "S"].includes(atom.element),
+          )
+          .map((atom) => {
+            const attached = createdBonds.filter(
+              (bond) => bond.from === atom.id || bond.to === atom.id,
+            );
+            const bondOrder = attached.reduce((sum, bond) => sum + bond.order, 0);
+            const acylAttached = attached.some((bond) => {
+              const neighborId = bond.from === atom.id ? bond.to : bond.from;
+              const neighbor = atomById.get(neighborId);
+              return (
+                neighbor?.element === "C" &&
+                createdBonds.some(
+                  (candidate) =>
+                    candidate.order === 2 &&
+                    (candidate.from === neighborId || candidate.to === neighborId) &&
+                    atomById.get(
+                      candidate.from === neighborId ? candidate.to : candidate.from,
+                    )?.element === "O",
+                )
+              );
+            });
+            const capacity = atom.element === "N" || atom.element === "P" ? 3 : 2;
+            return {
+              atom,
+              attached,
+              score:
+                (({ N: 100, P: 80, O: 60, S: 50 } as Record<string, number>)[atom.element] ??
+                  0) -
+                bondOrder * 3 -
+                Number(acylAttached) * 60,
+              available: bondOrder <= capacity,
+            };
+          })
+          .filter((candidate) => candidate.available)
+          .sort((first, second) => second.score - first.score);
+        const acceptor = candidates[0];
+        if (!acceptor) continue;
+        const neighbors = acceptor.attached
+          .map((bond) => atomById.get(bond.from === acceptor.atom.id ? bond.to : bond.from))
+          .filter((atom): atom is AtomNode => Boolean(atom));
+        const neighborCenter = {
+          x:
+            neighbors.reduce((sum, atom) => sum + atom.x, 0) /
+            Math.max(1, neighbors.length),
+          y:
+            neighbors.reduce((sum, atom) => sum + atom.y, 0) /
+            Math.max(1, neighbors.length),
+        };
+        const directionLength =
+          Math.hypot(
+            acceptor.atom.x - neighborCenter.x,
+            acceptor.atom.y - neighborCenter.y,
+          ) || 1;
+        hydrogen.x =
+          acceptor.atom.x + ((acceptor.atom.x - neighborCenter.x) / directionLength) * 185;
+        hydrogen.y =
+          acceptor.atom.y + ((acceptor.atom.y - neighborCenter.y) / directionLength) * 185;
+        createdBonds.splice(createdBonds.indexOf(acidBond), 1);
+        const nextBondId = Math.max(0, ...createdBonds.map((bond) => bond.id)) + 1;
+        createdBonds.push(
+          {
+            id: nextBondId,
+            from: acceptor.atom.id,
+            to: hydrogen.id,
+            type: "covalent",
+            order: 1,
+          },
+          {
+            id: nextBondId + 1,
+            from: acceptor.atom.id,
+            to: halide.id,
+            type: "ionic",
+            order: 1,
+          },
+        );
+      }
       const resolvedFormula = payload.formula.normalize("NFKC").replace(/\s+/g, "");
       const displayFormula = resolvedFormula.replace(/\d/g, (digit) => "₀₁₂₃₄₅₆₇₈₉"[Number(digit)]);
       const groupId = Date.now() + 1000;
@@ -1722,6 +2209,7 @@ export default function Home() {
                     ? 6
                     : 8;
     const nextBonds = [...kept];
+    const pendingIonicTransfers: Array<{ id: number; from: AtomNode; to: AtomNode }> = [];
     const ionicCount = (atomId: number) =>
       nextBonds
         .filter((bond) => bond.type === "ionic" && (bond.from === atomId || bond.to === atomId))
@@ -1762,7 +2250,13 @@ export default function Home() {
         occupied(atom.id) + candidate.order > capacity(atom)
       )
         return;
-      nextBonds.push({ id: now + index, from: id, to: atom.id, ...candidate });
+      const bondId = now + index;
+      nextBonds.push({ id: bondId, from: id, to: atom.id, ...candidate });
+      if (candidate.type === "ionic") {
+        const donor = metals.has(moved.element) ? moved : atom;
+        const receiver = donor === moved ? atom : moved;
+        pendingIonicTransfers.push({ id: bondId, from: donor, to: receiver });
+      }
     });
     const charged = applyIonicCharges(currentAtoms, nextBonds);
     const sequence = ++validationSequence.current;
@@ -1774,10 +2268,41 @@ export default function Home() {
       atomsRef.current = charged;
       setBonds(nextBonds);
       setAtoms(charged);
+      pruneDisconnectedFormulaGroups(nextBonds);
+      if (pendingIonicTransfers.length) {
+        setIonicElectronTransfers(pendingIonicTransfers);
+        window.setTimeout(() => setIonicElectronTransfers([]), 900);
+      }
       return true;
     } catch {
       return false;
     }
+  }
+
+  function pruneDisconnectedFormulaGroups(bondList: BondEdge[]) {
+    const connectedGroups = formulaGroupsRef.current.filter((group) => {
+      if (group.atomIds.length <= 1) return true;
+      const memberIds = new Set(group.atomIds);
+      const adjacency = new Map<number, number[]>();
+      bondList.forEach((bond) => {
+        if (!memberIds.has(bond.from) || !memberIds.has(bond.to)) return;
+        adjacency.set(bond.from, [...(adjacency.get(bond.from) ?? []), bond.to]);
+        adjacency.set(bond.to, [...(adjacency.get(bond.to) ?? []), bond.from]);
+      });
+      const visited = new Set<number>();
+      const stack = [group.atomIds[0]];
+      while (stack.length) {
+        const atomId = stack.pop()!;
+        if (visited.has(atomId)) continue;
+        visited.add(atomId);
+        (adjacency.get(atomId) ?? []).forEach((neighbor) => stack.push(neighbor));
+      }
+      return visited.size === group.atomIds.length;
+    });
+    if (connectedGroups.length === formulaGroupsRef.current.length) return;
+    formulaGroupsRef.current = connectedGroups;
+    setFormulaGroups(connectedGroups);
+    setSelectedMolecule(null);
   }
 
   function removeBond(id: number) {
@@ -1787,6 +2312,7 @@ export default function Home() {
     atomsRef.current = charged;
     setBonds(nextBonds);
     setAtoms(charged);
+    pruneDisconnectedFormulaGroups(nextBonds);
     setSelectedBond(null);
   }
 
@@ -2216,6 +2742,12 @@ export default function Home() {
                 </span>
               </button>
             </div>
+            {(reactionSearching || reactionSearchEmpty) && (
+              <output className="reaction-status" aria-live="polite">
+                {reactionSearching && <i aria-hidden="true" />}
+                {reactionSearching ? "Checking reactions" : "No reported reaction"}
+              </output>
+            )}
             {selectionBox && (
               <div
                 className="selection-marquee"
@@ -2231,39 +2763,38 @@ export default function Home() {
                 }}
               />
             )}
-            {validationNotice && <output className="validation-notice">{validationNotice}</output>}
+            {validationNoticePresence.mounted && (
+              <output
+                className={`validation-notice${
+                  validationNoticePresence.closing ? " is-closing" : ""
+                }`}
+              >
+                {lastValidationNotice.current}
+              </output>
+            )}
             {canvasNavigationHint && (
               <output className="canvas-navigation-toast" aria-live="polite">
                 <b>Selection started</b>
-                <span>To pan the canvas, middle-drag or drag with two fingers on a trackpad.</span>
+                <span>Middle-drag to pan the canvas. Scroll to zoom at the pointer.</span>
               </output>
             )}
-            {(preparedReaction ||
-              reactionChoices.length > 0 ||
-              reactionSearching ||
-              reactionSearchEmpty) && (
+            <output className="zoom-percentage" aria-label="Canvas zoom">
+              {Math.round(scale * 100)}%
+            </output>
+            {(preparedReaction || reactionChoices.length > 0) && (
               <div
-                className={`reaction-prompt${reactionSearchEmpty ? " is-empty" : ""}`}
+                className="reaction-prompt"
+                style={reactionMenuPosition}
                 onPointerDown={(event) => event.stopPropagation()}
               >
                 <header>
                   <small>
-                    {preparedReaction
-                      ? "Balanced on canvas"
-                      : reactionSearching
-                        ? "Checking PubChem"
-                        : reactionSearchEmpty
-                          ? "No reported reaction found"
-                          : "Possible reactions"}
+                    {preparedReaction ? "Balanced on canvas" : "Possible reactions"}
                   </small>
                   <strong>
                     {preparedReaction
                       ? "The required reactants are now present."
-                      : reactionSearching
-                        ? "Looking for reported products and balancing the equation…"
-                        : reactionSearchEmpty
-                          ? "Try bringing a different pair of chemicals together."
-                          : "Choose the route and conditions."}
+                      : `Choose a reaction for ${selectedReactantNames}.`}
                   </strong>
                 </header>
                 <div className="reaction-options">
@@ -2299,6 +2830,15 @@ export default function Home() {
                     ),
                   )}
                 </div>
+                {preparedReaction && (
+                  <button
+                    type="button"
+                    className="reaction-cancel"
+                    onClick={cancelPreparedReaction}
+                  >
+                    Cancel balance
+                  </button>
+                )}
               </div>
             )}
             <div
@@ -2401,6 +2941,36 @@ export default function Home() {
                     </g>
                   );
                 })}
+                {ionicElectronTransfers.map((transfer) => (
+                  <circle
+                    className="ionic-electron-transfer"
+                    key={transfer.id}
+                    cx={transfer.from.x * scale}
+                    cy={transfer.from.y * scale}
+                    r={4 * scale}
+                  >
+                    <animate
+                      attributeName="cx"
+                      from={transfer.from.x * scale}
+                      to={transfer.to.x * scale}
+                      dur="700ms"
+                      fill="freeze"
+                    />
+                    <animate
+                      attributeName="cy"
+                      from={transfer.from.y * scale}
+                      to={transfer.to.y * scale}
+                      dur="700ms"
+                      fill="freeze"
+                    />
+                    <animate
+                      attributeName="opacity"
+                      values="0;1;1;0"
+                      dur="850ms"
+                      fill="freeze"
+                    />
+                  </circle>
+                ))}
                 {active &&
                   bondAngles.map((guide, index) => {
                     const cx = active.x * scale,
@@ -2456,7 +3026,15 @@ export default function Home() {
                   );
                 })}
               {namedCompounds
-                .filter((compound) => !compound.atomIds.some((id) => compressedAtomIds.has(id)))
+                .filter(
+                  (compound) =>
+                    !compound.atomIds.some((id) => compressedAtomIds.has(id)) &&
+                    !formulaGroups.some(
+                      (group) =>
+                        group.atomIds.length === compound.atomIds.length &&
+                        group.atomIds.every((id) => compound.atomIds.includes(id)),
+                    ),
+                )
                 .map((compound) => (
                   <button
                     type="button"
@@ -2506,6 +3084,35 @@ export default function Home() {
                     <span>{compound.name}</span>
                   </button>
                 ))}
+              {isolatedElementEntities.map((entity) => (
+                <button
+                  type="button"
+                  className="compound-label element-molecule"
+                  key={`element-molecule-${entity.atomIds[0]}`}
+                  style={{
+                    transform: `translate(${entity.x * scale}px, ${(entity.y + 125) * scale}px)`,
+                  }}
+                  onPointerDown={(event) => beginCompoundDrag(event, entity.id, entity.atomIds)}
+                  onPointerMove={pointerMove}
+                  onPointerUp={() => {
+                    gesture.current = null;
+                  }}
+                  onPointerCancel={() => {
+                    gesture.current = null;
+                  }}
+                  onLostPointerCapture={() => {
+                    gesture.current = null;
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.key !== "Enter" && event.key !== " ") return;
+                    event.preventDefault();
+                    selectCompound(entity.id, entity.atomIds, event.shiftKey);
+                  }}
+                >
+                  <b>{entity.formula}</b>
+                  <span>{entity.name}</span>
+                </button>
+              ))}
               {formulaGroups
                 .filter((group) => !compressedGroups.has(group.id))
                 .flatMap((group) => {
@@ -2559,9 +3166,18 @@ export default function Home() {
                   return (
                     <button
                       type="button"
-                      className={`compressed-compound${selectedMolecule === group.id ? " selected" : ""}`}
+                      className={`compressed-compound${selectedMolecule === group.id ? " selected" : ""}${
+                        group.atomIds.some(
+                          (atomId) =>
+                            reactionSourceAtomIds.has(atomId) && !selectedAtomIds.has(atomId),
+                        )
+                          ? " reaction-source"
+                          : ""
+                      }`}
                       key={`compressed-${group.id}`}
-                      style={{ transform: `translate(${x * scale - 46}px,${y * scale - 46}px)` }}
+                      style={{
+                        transform: `translate(${x * scale}px,${y * scale}px) translate(-50%,-50%) scale(${scale})`,
+                      }}
                       onPointerDown={(event) => {
                         beginCompoundDrag(event, group.id, group.atomIds);
                       }}
@@ -2605,7 +3221,11 @@ export default function Home() {
                     <div
                       role="button"
                       tabIndex={0}
-                      className={`canvas-atom ${isSelected ? "selected" : ""}`}
+                      className={`canvas-atom ${isSelected ? "selected" : ""}${
+                        reactionSourceAtomIds.has(atom.id) && !isSelected
+                          ? " reaction-source"
+                          : ""
+                      }`}
                       style={{
                         width: atomSize,
                         height: atomSize,
@@ -2680,6 +3300,7 @@ export default function Home() {
                       {atom.charge !== 0 && (
                         <span
                           className={`atom-charge ${atom.charge > 0 ? "positive" : "negative"}`}
+                          style={{ transform: `scale(${scale})` }}
                         >
                           {atom.charge > 0 ? `+${atom.charge}` : atom.charge}
                         </span>
@@ -2687,7 +3308,7 @@ export default function Home() {
                     </div>
                   );
                 })}
-              {active && activeElement && (
+              {active && activeElement && selected.length === 1 && bondSummary.length === 0 && (
                 <div
                   className="canvas-atom-controls"
                   style={{
@@ -3028,7 +3649,6 @@ export default function Home() {
             >
               <header>
                 <div>
-                  <small>Element library</small>
                   <h1>Periodic table</h1>
                 </div>
                 <div className="periodic-filters">
@@ -3199,7 +3819,6 @@ export default function Home() {
                 }}
               >
                 <label>
-                  <span>Structure lookup</span>
                   <input
                     autoFocus
                     value={formulaInput}
@@ -3214,7 +3833,7 @@ export default function Home() {
                     placeholder="Formula, name, CID, or smiles:…"
                   />
                 </label>
-                {formulaError && <output>{formulaError}</output>}
+                {formulaError && formulaCandidates.length === 0 && <output>{formulaError}</output>}
                 {formulaCandidates.length > 0 && (
                   <div className="structure-candidates" aria-label="Matching PubChem structures">
                     <header>
@@ -3347,7 +3966,7 @@ function MoleculeInspector({
       </section>
       <button type="button" className="compress-molecule" onClick={onToggleCompressed}>
         {compressed ? <ArrowsOut /> : <ArrowsIn />}
-        {compressed ? "Expand structure" : "Compress to one circle"}
+        {compressed ? "Expand structure" : "Compress"}
       </button>
       <button type="button" className="remove-bond" onClick={onDelete}>
         <Trash /> Delete molecule
@@ -3564,25 +4183,31 @@ function connectedStructure(record: StructureRecord) {
   return visited.size === record.atoms.length;
 }
 
-function scaledCounts(formula: string, coefficient: number) {
-  return Object.fromEntries(
-    Object.entries(formulaCounts(formula)).map(([symbol, count]) => [symbol, count * coefficient]),
+function usableReactionProduct(record: StructureRecord) {
+  if (connectedStructure(record)) return true;
+  const symbols = record.atoms.map((atom) => allSymbols[atom.atomicNumber - 1]);
+  return symbols.some((first, firstIndex) =>
+    symbols.some(
+      (second, secondIndex) =>
+        secondIndex > firstIndex && metals.has(first) !== metals.has(second),
+    ),
   );
 }
 
-function addCounts(...parts: Array<Record<string, number>>) {
-  const result: Record<string, number> = {};
-  parts.forEach((part) =>
-    Object.entries(part).forEach(([symbol, count]) => {
-      result[symbol] = (result[symbol] ?? 0) + count;
-    }),
-  );
-  return result;
+function greatestCommonDivisor(first: number, second: number): number {
+  return second ? greatestCommonDivisor(second, first % second) : Math.abs(first);
 }
 
-function sameCounts(first: Record<string, number>, second: Record<string, number>) {
-  const symbols = new Set([...Object.keys(first), ...Object.keys(second)]);
-  return [...symbols].every((symbol) => (first[symbol] ?? 0) === (second[symbol] ?? 0));
+function leastCommonMultiple(first: number, second: number) {
+  return Math.abs(first * second) / greatestCommonDivisor(first, second);
+}
+
+function approximateFraction(value: number) {
+  for (let denominator = 1; denominator <= 120; denominator++) {
+    const numerator = Math.round(value * denominator);
+    if (Math.abs(value - numerator / denominator) < 1e-9) return { numerator, denominator };
+  }
+  return null;
 }
 
 function balanceFormulas(
@@ -3593,46 +4218,68 @@ function balanceFormulas(
 ) {
   const formulas = [...reactants, ...products];
   if (formulas.length < 3 || products.length > 3) return null;
-  for (let limit = 1; limit <= 12; limit++) {
-    const coefficients = Array<number>(formulas.length).fill(1);
-    const search = (index: number): number[] | null => {
-      if (index === coefficients.length) {
-        if (!coefficients.includes(limit)) return null;
-        const left = addCounts(
-          ...reactants.map((formula, formulaIndex) =>
-            scaledCounts(formula, coefficients[formulaIndex]),
-          ),
-        );
-        const right = addCounts(
-          ...products.map((formula, formulaIndex) =>
-            scaledCounts(formula, coefficients[reactants.length + formulaIndex]),
-          ),
-        );
-        const leftCharge = reactantCharges.reduce(
-          (sum, charge, chargeIndex) => sum + charge * coefficients[chargeIndex],
-          0,
-        );
-        const rightCharge = productCharges.reduce(
-          (sum, charge, chargeIndex) => sum + charge * coefficients[reactants.length + chargeIndex],
-          0,
-        );
-        return sameCounts(left, right) && leftCharge === rightCharge ? [...coefficients] : null;
-      }
-      for (let coefficient = 1; coefficient <= limit; coefficient++) {
-        coefficients[index] = coefficient;
-        const result = search(index + 1);
-        if (result) return result;
-      }
-      return null;
-    };
-    const result = search(0);
-    if (result)
-      return {
-        reactants: result.slice(0, reactants.length),
-        products: result.slice(reactants.length),
-      };
+  const counts = formulas.map(formulaCounts);
+  const symbols = [...new Set(counts.flatMap((part) => Object.keys(part)))];
+  const charges = [...reactantCharges, ...productCharges];
+  const dimensions = [
+    ...symbols.map((symbol) => counts.map((part) => part[symbol] ?? 0)),
+    ...(charges.some(Boolean) ? [charges] : []),
+  ];
+  const matrix = dimensions.map((dimension) =>
+    dimension.map((count, index) => count * (index < reactants.length ? 1 : -1)),
+  );
+  const pivotColumns: number[] = [];
+  let pivotRow = 0;
+  for (let column = 0; column < formulas.length && pivotRow < matrix.length; column++) {
+    const swapRow = matrix.findIndex(
+      (row, rowIndex) => rowIndex >= pivotRow && Math.abs(row[column]) > 1e-10,
+    );
+    if (swapRow < 0) continue;
+    [matrix[pivotRow], matrix[swapRow]] = [matrix[swapRow], matrix[pivotRow]];
+    const pivot = matrix[pivotRow][column];
+    matrix[pivotRow] = matrix[pivotRow].map((value) => value / pivot);
+    matrix.forEach((row, rowIndex) => {
+      if (rowIndex === pivotRow || Math.abs(row[column]) <= 1e-10) return;
+      const factor = row[column];
+      matrix[rowIndex] = row.map((value, index) => value - factor * matrix[pivotRow][index]);
+    });
+    pivotColumns.push(column);
+    pivotRow++;
   }
-  return null;
+  const freeColumns = formulas
+    .map((_, index) => index)
+    .filter((column) => !pivotColumns.includes(column));
+  if (freeColumns.length !== 1) return null;
+  const coefficients = Array<number>(formulas.length).fill(0);
+  coefficients[freeColumns[0]] = 1;
+  for (let row = pivotColumns.length - 1; row >= 0; row--) {
+    const column = pivotColumns[row];
+    coefficients[column] = -matrix[row].reduce(
+      (sum, value, index) => sum + (index === column ? 0 : value * coefficients[index]),
+      0,
+    );
+  }
+  if (coefficients.every((coefficient) => coefficient < -1e-10)) {
+    coefficients.forEach((coefficient, index) => {
+      coefficients[index] = -coefficient;
+    });
+  }
+  if (coefficients.some((coefficient) => coefficient <= 1e-10)) return null;
+  const fractions = coefficients.map(approximateFraction);
+  if (fractions.some((fraction) => !fraction)) return null;
+  const commonDenominator = fractions.reduce(
+    (multiple, fraction) => leastCommonMultiple(multiple, fraction!.denominator),
+    1,
+  );
+  const integers = fractions.map(
+    (fraction) => fraction!.numerator * (commonDenominator / fraction!.denominator),
+  );
+  const commonDivisor = integers.reduce(greatestCommonDivisor);
+  const normalized = integers.map((coefficient) => coefficient / commonDivisor);
+  return {
+    reactants: normalized.slice(0, reactants.length),
+    products: normalized.slice(reactants.length),
+  };
 }
 
 const genericProductWords = new Set([
@@ -3661,12 +4308,12 @@ function reactionProductQueries(text: string, reactants: [StructureRecord, Struc
     .replace(/\[[^\]]*]/g, " ")
     .split(/(?<=[.;])\s+|;\s*/)
     .filter((clause) =>
-      /form|produc|yield|generat|release|evolv|liberat|decompos|give off/i.test(clause),
+      /form|produc|yield|generat|release|evolv|liberat|decompos|\bgiv/i.test(clause),
     );
   const productTails: string[] = [];
   for (const clause of clauses) {
     for (const match of clause.matchAll(
-      /(?:to\s+form|forming|forms?|produces?|yields?|generates?|releases?|evolves?|liberates?|gives?\s+off|decomposes?\s+(?:to|into))\s+([^.;]+)/gi,
+      /(?:to\s+(?:form|give)|forming|forms?|produces?|yields?|generates?|releases?|evolves?|liberates?|gives?(?:\s+off)?|decomposes?\s+(?:to|into))\s+([^.;]+)/gi,
     ))
       productTails.push(match[1]);
     const passive = clause.match(
@@ -3827,14 +4474,14 @@ async function discoverReactionChoices(first: MoleculeEntity, second: MoleculeEn
         .map((candidate) => lookupStructure(String(candidate.cid))),
     );
     const record = alternatives.find((alternative) =>
-      alternative.record ? connectedStructure(alternative.record) : false,
+      alternative.record ? usableReactionProduct(alternative.record) : false,
     )?.record;
     return { query, record };
   });
   const recordByQuery = new Map(
     resolvedCandidates.flatMap(({ query, record }) =>
       record?.cid &&
-      connectedStructure(record) &&
+      usableReactionProduct(record) &&
       record.cid !== firstRecord.cid &&
       record.cid !== secondRecord.cid
         ? [[query, record] as const]
@@ -4083,19 +4730,6 @@ function AtomLearning({
           <b>{stable.title}</b>
           <span>{stable.text}</span>
         </div>
-      </section>
-      <section>
-        <h2>Resonance & octet exceptions</h2>
-        {exception ? (
-          <p className="resonance-note">
-            {exception}. The octet rule is a useful pattern, not a universal law.
-          </p>
-        ) : (
-          <p>
-            No local octet exception is detected. Compound-specific resonance claims are not
-            inferred from a small formula lookup table.
-          </p>
-        )}
       </section>
     </>
   );

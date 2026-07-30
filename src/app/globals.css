@@ -149,7 +149,7 @@ button {
 .validation-notice {
   position: absolute;
   z-index: 20;
-  top: 78px;
+  top: 4px;
   left: 50%;
   max-width: min(430px, calc(100% - 32px));
   transform: translateX(-50%);
@@ -161,6 +161,22 @@ button {
   box-shadow: 0 8px 24px #0008;
   font: 10px/1.45 var(--font-geist-mono);
   pointer-events: none;
+  animation: validation-notice-in 180ms ease-out;
+}
+.validation-notice.is-closing {
+  animation: validation-notice-out 400ms ease-in forwards;
+}
+@keyframes validation-notice-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, -5px);
+  }
+}
+@keyframes validation-notice-out {
+  to {
+    opacity: 0;
+    transform: translate(-50%, -8px);
+  }
 }
 .canvas-navigation-toast {
   position: absolute;
@@ -187,6 +203,16 @@ button {
   color: var(--muted);
   font-size: 10px;
   line-height: 1.45;
+}
+.zoom-percentage {
+  position: absolute;
+  z-index: 9;
+  right: 14px;
+  bottom: 12px;
+  color: #bac2de;
+  font: 10px var(--font-geist-mono);
+  text-shadow: 0 1px 4px #000;
+  pointer-events: none;
 }
 @keyframes toast-enter {
   from {
@@ -432,20 +458,20 @@ button {
   display: flex;
   align-items: center;
   gap: 6px;
-  min-height: 52px;
-  padding: 7px 12px;
-  border-bottom: 1px solid var(--line);
+  min-height: 38px;
+  padding: 2px 12px;
   background: transparent;
 }
 .bond-toolbar button {
+  min-height: 34px;
   border: 0;
   border-radius: 7px;
   background: transparent;
-  padding: 9px 12px;
+  padding: 6px 10px;
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 11px;
+  font-size: 12px;
   cursor: pointer;
 }
 .bond-toolbar button:hover:not(:disabled) {
@@ -453,7 +479,7 @@ button {
 }
 .bond-toolbar .structure-lookup {
   position: relative;
-  min-width: 116px;
+  min-width: 0;
   justify-content: center;
   background: var(--accent);
   color: #11111b;
@@ -462,7 +488,7 @@ button {
 }
 .bond-toolbar .save-canvas {
   position: relative;
-  min-width: 82px;
+  min-width: 0;
   justify-content: center;
   border: 1px solid var(--line);
   background: #181825;
@@ -476,22 +502,43 @@ button {
 .reaction-prompt {
   position: absolute;
   z-index: 12;
-  top: 64px;
-  left: 14px;
+  transform: translateX(-50%);
   display: flex;
   align-items: stretch;
   gap: 10px;
   width: min(620px, calc(100% - 28px));
   max-height: min(430px, calc(100% - 100px));
   overflow: auto;
-  padding: 9px 10px 9px 13px;
+  padding: 7px 10px 7px 13px;
   border: 1px solid #89b4fa66;
   border-radius: 10px;
   background: #11111bf2;
   box-shadow: 0 16px 42px #000a;
 }
-.reaction-prompt.is-empty {
-  width: min(370px, calc(100% - 28px));
+.reaction-status {
+  position: absolute;
+  z-index: 9;
+  top: 14px;
+  right: 14px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: #a6adc8;
+  font-size: 10px;
+  pointer-events: none;
+}
+.reaction-status i {
+  width: 11px;
+  height: 11px;
+  border: 1.5px solid #45475a;
+  border-top-color: #89b4fa;
+  border-radius: 50%;
+  animation: reaction-status-spin 0.8s linear infinite;
+}
+@keyframes reaction-status-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 .reaction-prompt header {
   display: grid;
@@ -550,8 +597,25 @@ button {
   font-weight: 700;
   cursor: pointer;
 }
+.reaction-cancel {
+  flex: none;
+  align-self: center;
+  min-height: 34px;
+  padding: 7px 10px;
+  border: 1px solid #45475a;
+  border-radius: 7px;
+  background: transparent;
+  color: #bac2de;
+  font-size: 10px;
+  cursor: pointer;
+}
+.reaction-cancel:hover {
+  border-color: #f38ba8;
+  color: #f38ba8;
+}
 .compressed-compound {
   position: absolute;
+  transform-origin: center;
   width: 92px;
   height: 92px;
   display: grid;
@@ -576,6 +640,12 @@ button {
   box-shadow:
     0 12px 34px #000a,
     0 0 0 6px #a6e3a126;
+}
+.compressed-compound.reaction-source {
+  border-color: #f9e2af;
+  box-shadow:
+    0 12px 34px #000a,
+    0 0 0 7px #f9e2af38;
 }
 .compressed-compound b {
   font: 700 15px var(--font-geist-mono);
@@ -648,6 +718,11 @@ button {
 .bond-line.ionic line {
   stroke: var(--coral);
   stroke-dasharray: 7 7;
+}
+.ionic-electron-transfer {
+  fill: #89b4fa;
+  filter: drop-shadow(0 0 5px #89b4fa);
+  pointer-events: none;
 }
 .bond-line.metallic line {
   stroke: var(--violet);
@@ -786,6 +861,11 @@ button {
   outline: 1px solid var(--accent);
   outline-offset: 4px;
 }
+.canvas-atom.reaction-source {
+  outline: 2px solid #f9e2af;
+  outline-offset: 7px;
+  filter: drop-shadow(0 0 12px #f9e2af70);
+}
 .atom-diagram {
   width: 100%;
   height: 100%;
@@ -853,6 +933,9 @@ button {
   color: #11111b;
   font: 700 11px var(--font-geist-mono);
   box-shadow: 0 0 0 4px #000;
+}
+.atom-charge {
+  transform-origin: top right;
 }
 .atom-charge.positive {
   background: var(--coral);
@@ -1595,10 +1678,7 @@ button {
   gap: 8px;
 }
 .formula-command label {
-  display: grid;
-  grid-template-columns: auto 1fr;
-  align-items: center;
-  gap: 9px;
+  display: block;
   min-width: 0;
 }
 .formula-command label span {
@@ -1658,6 +1738,7 @@ button {
   background: #11111b;
 }
 .structure-candidates header b {
+  color: #cdd6f4;
   font-size: 12px;
 }
 .structure-candidates header span {
@@ -1732,9 +1813,9 @@ button {
   max-height: calc(100dvh - 36px);
   margin: 0;
   transform: translate(-50%, -50%);
-  overflow: auto;
+  overflow: hidden;
   padding: 15px;
-  border: 1px solid #45475a;
+  border: 1px solid #313244;
   border-radius: 12px;
   background: #0b0b12;
   box-shadow: 0 28px 80px #000d;
@@ -1761,7 +1842,8 @@ button {
   font: 10px var(--font-geist-mono);
 }
 .periodic-panel header h1 {
-  margin: 2px 0 0;
+  margin: 0;
+  color: var(--accent);
   font-size: 19px;
 }
 .periodic-panel header > button {
@@ -1807,10 +1889,11 @@ button {
   border-color: var(--accent);
 }
 .periodic-grid {
-  min-width: 1120px;
+  min-width: 0;
+  height: min(594px, calc(100dvh - 120px));
   display: grid;
-  grid-template-columns: repeat(18, minmax(46px, 1fr));
-  grid-template-rows: repeat(9, 72px);
+  grid-template-columns: repeat(18, minmax(0, 1fr));
+  grid-template-rows: repeat(9, minmax(0, 1fr));
   gap: 5px;
 }
 .periodic-grid button {
@@ -1822,7 +1905,7 @@ button {
   gap: 1px;
   padding: 6px;
   overflow: hidden;
-  border: 1px solid #45475a;
+  border: 1px solid #313244;
   border-radius: 6px;
   background: #181825;
   text-align: left;
@@ -2026,12 +2109,10 @@ button {
     display: block;
   }
   .bond-toolbar {
-    min-height: 48px;
-    padding: 5px 8px;
+    min-height: 38px;
+    padding: 2px 8px;
   }
   .reaction-prompt {
-    top: 58px;
-    left: 8px;
     width: calc(100% - 16px);
   }
   .canvas-atom {

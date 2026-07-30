@@ -1,3 +1,10 @@
+## [1.3.2](https://github.com/kk-spartans/electron/compare/v1.3.1...v1.3.2) (2026-07-30)
+
+
+### Bug Fixes
+
+* avoid duplicate reaction index preparation ([f59be85](https://github.com/kk-spartans/electron/commit/f59be85b9b45463be28ec5d87b85b953b737dcb1))
+
 ## [1.3.1](https://github.com/kk-spartans/electron/compare/v1.3.0...v1.3.1) (2026-07-30)
 
 

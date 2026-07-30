@@ -14,7 +14,9 @@ type WorkerTask = {
 };
 
 const root = new URL("../", import.meta.url).pathname;
-const initRDKitModule = RDKitPackage as unknown as RDKitLoader;
+const initRDKitModule =
+  (RDKitPackage as unknown as { default?: RDKitLoader }).default ??
+  (RDKitPackage as unknown as RDKitLoader);
 const rdkitPromise = initRDKitModule({
   locateFile: () => `${root}node_modules/@rdkit/rdkit/dist/RDKit_minimal.wasm`,
 });

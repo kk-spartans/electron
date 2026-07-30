@@ -78,6 +78,7 @@ type CanvasDocument = {
   atoms: AtomNode[];
   bonds: BondEdge[];
   formulaGroups: FormulaGroup[];
+  compressedGroupIds?: number[];
   view: { pan: { x: number; y: number }; scale: number };
 };
 type CanvasFileHandle = {
@@ -88,6 +89,9 @@ type CanvasFileHandle = {
 };
 
 const canvasFileExtension = ".electron";
+const localCanvasKey = "electron:canvas";
+const opfsCanvasFileName = "electron-autosave.electron";
+const canvasNavigationHintKey = "electron:canvas-navigation-hint-seen";
 const reactionChoiceCache = new Map<string, Promise<ReactionRecipe[]>>();
 
 function sameHistorySnapshot(first: HistorySnapshot, second: HistorySnapshot) {
@@ -131,6 +135,12 @@ function parseCanvasDocument(contents: string): CanvasDocument {
     candidate.atoms.length > 1000
   )
     throw new Error("This is not a valid Electron canvas file.");
+  if (
+    candidate.compressedGroupIds &&
+    (!Array.isArray(candidate.compressedGroupIds) ||
+      candidate.compressedGroupIds.some((id) => !Number.isInteger(id)))
+  )
+    throw new Error("The canvas file contains invalid compressed molecule data.");
 
   const atomIds = new Set<number>();
   candidate.atoms.forEach((atom) => {
@@ -159,6 +169,37 @@ function parseCanvasDocument(contents: string): CanvasDocument {
     throw new Error("The canvas file contains an invalid bond.");
 
   return candidate as CanvasDocument;
+}
+
+async function readAutosavedCanvas() {
+  try {
+    const root = await navigator.storage.getDirectory();
+    const handle = await root.getFileHandle(opfsCanvasFileName);
+    return await (await handle.getFile()).text();
+  } catch {
+    try {
+      return localStorage.getItem(localCanvasKey);
+    } catch {
+      return null;
+    }
+  }
+}
+
+async function writeAutosavedCanvas(contents: string) {
+  try {
+    const root = await navigator.storage.getDirectory();
+    const handle = await root.getFileHandle(opfsCanvasFileName, { create: true });
+    const writable = await handle.createWritable();
+    await writable.write(contents);
+    await writable.close();
+    try {
+      localStorage.removeItem(localCanvasKey);
+    } catch {}
+  } catch {
+    try {
+      localStorage.setItem(localCanvasKey, contents);
+    } catch {}
+  }
 }
 
 type ElementData = {
@@ -513,6 +554,7 @@ export default function Home() {
     endY: number;
   } | null>(null);
   const [boot, setBoot] = useState({ progress: 0, ready: false, error: "" });
+  const [localCanvasReady, setLocalCanvasReady] = useState(false);
   const nextId = useRef(1);
   const defaultCompoundLoaded = useRef(false);
   const spawnFormulaRef = useRef<
@@ -703,9 +745,50 @@ export default function Home() {
   }, []);
   useEffect(() => {
     if (!boot.ready || defaultCompoundLoaded.current) return;
-    defaultCompoundLoaded.current = true;
-    void spawnFormulaRef.current("fentanyl");
+    let current = true;
+    const restoreCanvas = async () => {
+      try {
+        const saved = await readAutosavedCanvas();
+        if (!current) return;
+        if (saved) {
+          applyCanvasDocument(parseCanvasDocument(saved));
+          defaultCompoundLoaded.current = true;
+          setLocalCanvasReady(true);
+          return;
+        }
+      } catch {
+        try {
+          localStorage.removeItem(localCanvasKey);
+        } catch {}
+      }
+      await spawnFormulaRef.current("fentanyl");
+      if (current) {
+        defaultCompoundLoaded.current = true;
+        setLocalCanvasReady(true);
+      }
+    };
+    void restoreCanvas();
+    return () => {
+      current = false;
+    };
   }, [boot.ready]);
+  useEffect(() => {
+    if (!localCanvasReady) return;
+    const timeout = window.setTimeout(() => {
+      void writeAutosavedCanvas(
+        JSON.stringify({
+          version: 1,
+          savedAt: new Date().toISOString(),
+          atoms,
+          bonds,
+          formulaGroups,
+          compressedGroupIds: [...compressedGroups],
+          view: { pan, scale },
+        } satisfies CanvasDocument),
+      );
+    }, 300);
+    return () => window.clearTimeout(timeout);
+  }, [atoms, bonds, compressedGroups, formulaGroups, localCanvasReady, pan, scale]);
   useEffect(() => {
     if (!validationNotice) return;
     const timeout = window.setTimeout(() => setValidationNotice(""), 4200);
@@ -1284,6 +1367,7 @@ export default function Home() {
       atoms,
       bonds,
       formulaGroups,
+      compressedGroupIds: [...compressedGroups],
       view: { pan, scale },
     };
   }
@@ -1291,9 +1375,13 @@ export default function Home() {
   function applyCanvasDocument(document: CanvasDocument) {
     atomsRef.current = document.atoms;
     bondsRef.current = document.bonds;
+    formulaGroupsRef.current = document.formulaGroups;
     setAtoms(document.atoms);
     setBonds(document.bonds);
     setFormulaGroups(document.formulaGroups);
+    const restoredCompressedGroups = new Set(document.compressedGroupIds ?? []);
+    compressedGroupsRef.current = restoredCompressedGroups;
+    setCompressedGroups(restoredCompressedGroups);
     setPan(document.view.pan);
     setScale(Math.min(2.5, Math.max(0.25, document.view.scale)));
     setSelected([]);
@@ -1311,6 +1399,7 @@ export default function Home() {
 
   async function saveCanvas(fileName: string) {
     const serialized = JSON.stringify(currentCanvasDocument(), null, 2);
+    await writeAutosavedCanvas(serialized);
     const safeName =
       fileName
         .trim()
@@ -2014,7 +2103,14 @@ export default function Home() {
                 } else if (event.button === 0) {
                   if (!canvasNavigationHintShown.current) {
                     canvasNavigationHintShown.current = true;
-                    setCanvasNavigationHint(true);
+                    try {
+                      if (!localStorage.getItem(canvasNavigationHintKey)) {
+                        localStorage.setItem(canvasNavigationHintKey, "1");
+                        setCanvasNavigationHint(true);
+                      }
+                    } catch {
+                      setCanvasNavigationHint(true);
+                    }
                   }
                   gesture.current = {
                     type: "marquee",
@@ -3064,7 +3160,10 @@ export default function Home() {
                   />
                   <span>.electron</span>
                 </div>
-                <p>Save a .electron copy that you can import later.</p>
+                <p>
+                  This canvas keeps autosaving in your browser. You can also save a portable
+                  .electron copy to import elsewhere.
+                </p>
                 <div className="save-dialog-actions">
                   <button type="button" onClick={() => setSaveDialogOpen(false)}>
                     Cancel

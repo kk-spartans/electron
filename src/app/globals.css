@@ -90,6 +90,23 @@ button {
 .element-tray {
   border-right: 1px solid var(--line);
   padding: 17px 13px;
+  scrollbar-width: thin;
+  scrollbar-color: #45475a transparent;
+}
+.element-tray::-webkit-scrollbar {
+  width: 10px;
+}
+.element-tray::-webkit-scrollbar-track {
+  background: transparent;
+}
+.element-tray::-webkit-scrollbar-thumb {
+  min-height: 44px;
+  border: 3px solid #0b0b12;
+  border-radius: 999px;
+  background: #45475a;
+}
+.element-tray::-webkit-scrollbar-thumb:hover {
+  background: #6c7086;
 }
 .product-mark {
   display: flex;
@@ -144,6 +161,38 @@ button {
   box-shadow: 0 8px 24px #0008;
   font: 10px/1.45 var(--font-geist-mono);
   pointer-events: none;
+}
+.canvas-navigation-toast {
+  position: absolute;
+  z-index: 20;
+  bottom: 20px;
+  left: 50%;
+  width: min(390px, calc(100% - 32px));
+  transform: translateX(-50%);
+  display: grid;
+  gap: 3px;
+  padding: 10px 12px;
+  border: 1px solid #585b70;
+  border-radius: 9px;
+  background: #181825f2;
+  color: var(--text);
+  box-shadow: 0 12px 34px #000a;
+  pointer-events: none;
+  animation: toast-enter 180ms cubic-bezier(0.25, 1, 0.5, 1);
+}
+.canvas-navigation-toast b {
+  font-size: 11px;
+}
+.canvas-navigation-toast span {
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.45;
+}
+@keyframes toast-enter {
+  from {
+    opacity: 0;
+    transform: translate(-50%, 6px);
+  }
 }
 .delocalized-charge {
   fill: #f0c879;
@@ -224,6 +273,9 @@ button {
 @media (prefers-reduced-motion: reduce) {
   .boot-progress i {
     transition: none;
+  }
+  .canvas-navigation-toast {
+    animation: none;
   }
 }
 .atom-inspector {
@@ -476,6 +528,11 @@ button {
 .reaction-options b {
   color: #cdd6f4;
   font: 11px var(--font-geist-mono);
+}
+.reaction-options em {
+  color: #89b4fa;
+  font-size: 10px;
+  font-style: normal;
 }
 .reaction-options article small {
   color: var(--muted);

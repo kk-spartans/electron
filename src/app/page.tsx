@@ -504,6 +504,8 @@ export default function Home() {
   } | null>(null);
   const [preparedReaction, setPreparedReaction] = useState<PreparedReaction | null>(null);
   const [validationNotice, setValidationNotice] = useState("");
+  const [canvasNavigationHint, setCanvasNavigationHint] = useState(false);
+  const canvasNavigationHintShown = useRef(false);
   const [selectionBox, setSelectionBox] = useState<{
     startX: number;
     startY: number;
@@ -709,6 +711,11 @@ export default function Home() {
     const timeout = window.setTimeout(() => setValidationNotice(""), 4200);
     return () => window.clearTimeout(timeout);
   }, [validationNotice]);
+  useEffect(() => {
+    if (!canvasNavigationHint) return;
+    const timeout = window.setTimeout(() => setCanvasNavigationHint(false), 6500);
+    return () => window.clearTimeout(timeout);
+  }, [canvasNavigationHint]);
 
   // Compound identities and names come from PubChem-backed formula groups.
   const namedCompounds = useMemo<
@@ -979,6 +986,13 @@ export default function Home() {
     if (!canvas) return;
     const handleWheel = (event: WheelEvent) => {
       event.preventDefault();
+      if (!event.ctrlKey) {
+        setPan((current) => ({
+          x: current.x - event.deltaX,
+          y: current.y - event.deltaY,
+        }));
+        return;
+      }
       const box = canvas.getBoundingClientRect(),
         pointerX = event.clientX - box.left,
         pointerY = event.clientY - box.top;
@@ -1998,6 +2012,10 @@ export default function Home() {
                     oy: pan.y,
                   };
                 } else if (event.button === 0) {
+                  if (!canvasNavigationHintShown.current) {
+                    canvasNavigationHintShown.current = true;
+                    setCanvasNavigationHint(true);
+                  }
                   gesture.current = {
                     type: "marquee",
                     sx: event.clientX,
@@ -2118,6 +2136,12 @@ export default function Home() {
               />
             )}
             {validationNotice && <output className="validation-notice">{validationNotice}</output>}
+            {canvasNavigationHint && (
+              <output className="canvas-navigation-toast" aria-live="polite">
+                <b>Selection started</b>
+                <span>To pan the canvas, middle-drag or drag with two fingers on a trackpad.</span>
+              </output>
+            )}
             {(preparedReaction ||
               reactionChoices.length > 0 ||
               reactionSearching ||
@@ -2149,6 +2173,7 @@ export default function Home() {
                       <article key={reactionEquation(recipe)}>
                         <span>
                           <b>{reactionEquation(recipe)}</b>
+                          <em>{recipe.name}</em>
                           <small>{recipe.condition}</small>
                         </span>
                         <button
@@ -3458,26 +3483,193 @@ function sameCounts(first: Record<string, number>, second: Record<string, number
   return [...symbols].every((symbol) => (first[symbol] ?? 0) === (second[symbol] ?? 0));
 }
 
-function balanceFormulas(reactants: string[], products: string[]) {
-  for (let first = 1; first <= 4; first++)
-    for (let second = 1; second <= 4; second++)
-      for (let productA = 1; productA <= 4; productA++)
-        for (let productB = 1; productB <= (products.length === 2 ? 4 : 1); productB++) {
-          const left = addCounts(
-            scaledCounts(reactants[0], first),
-            scaledCounts(reactants[1], second),
-          );
-          const right = addCounts(
-            scaledCounts(products[0], productA),
-            ...(products[1] ? [scaledCounts(products[1], productB)] : []),
-          );
-          if (sameCounts(left, right))
-            return {
-              reactants: [first, second],
-              products: products.length === 2 ? [productA, productB] : [productA],
-            };
-        }
+function balanceFormulas(
+  reactants: string[],
+  products: string[],
+  reactantCharges = reactants.map(() => 0),
+  productCharges = products.map(() => 0),
+) {
+  const formulas = [...reactants, ...products];
+  if (formulas.length < 3 || products.length > 3) return null;
+  for (let limit = 1; limit <= 12; limit++) {
+    const coefficients = Array<number>(formulas.length).fill(1);
+    const search = (index: number): number[] | null => {
+      if (index === coefficients.length) {
+        if (!coefficients.includes(limit)) return null;
+        const left = addCounts(
+          ...reactants.map((formula, formulaIndex) =>
+            scaledCounts(formula, coefficients[formulaIndex]),
+          ),
+        );
+        const right = addCounts(
+          ...products.map((formula, formulaIndex) =>
+            scaledCounts(formula, coefficients[reactants.length + formulaIndex]),
+          ),
+        );
+        const leftCharge = reactantCharges.reduce(
+          (sum, charge, chargeIndex) => sum + charge * coefficients[chargeIndex],
+          0,
+        );
+        const rightCharge = productCharges.reduce(
+          (sum, charge, chargeIndex) => sum + charge * coefficients[reactants.length + chargeIndex],
+          0,
+        );
+        return sameCounts(left, right) && leftCharge === rightCharge ? [...coefficients] : null;
+      }
+      for (let coefficient = 1; coefficient <= limit; coefficient++) {
+        coefficients[index] = coefficient;
+        const result = search(index + 1);
+        if (result) return result;
+      }
+      return null;
+    };
+    const result = search(0);
+    if (result)
+      return {
+        reactants: result.slice(0, reactants.length),
+        products: result.slice(reactants.length),
+      };
+  }
   return null;
+}
+
+const genericProductWords = new Set([
+  "air",
+  "combustion",
+  "explosion",
+  "fire",
+  "flame",
+  "fume",
+  "fumes",
+  "gas",
+  "gases",
+  "heat",
+  "mixture",
+  "product",
+  "products",
+  "solution",
+  "solutions",
+  "vapor",
+  "vapors",
+]);
+
+function reactionProductQueries(text: string, reactants: [StructureRecord, StructureRecord]) {
+  const queries = new Set<string>();
+  const clauses = text
+    .replace(/\[[^\]]*]/g, " ")
+    .split(/(?<=[.;])\s+|;\s*/)
+    .filter((clause) =>
+      /form|produc|yield|generat|release|evolv|liberat|decompos|give off/i.test(clause),
+    );
+  const productTails: string[] = [];
+  for (const clause of clauses) {
+    for (const match of clause.matchAll(
+      /(?:to\s+form|forming|forms?|produces?|yields?|generates?|releases?|evolves?|liberates?|gives?\s+off|decomposes?\s+(?:to|into))\s+([^.;]+)/gi,
+    ))
+      productTails.push(match[1]);
+    const passive = clause.match(
+      /([^.;]+?)\s+(?:is|are)\s+(?:formed|produced|generated|released)\b/i,
+    );
+    if (passive) productTails.push(passive[1].split(",").at(-1) ?? passive[1]);
+  }
+
+  for (const tail of productTails) {
+    for (const match of tail.matchAll(/\b(?:[A-Z][a-z]?\d*){1,8}\b/g))
+      if (validFormula(match[0])) queries.add(match[0]);
+    const withoutConditions = tail.split(
+      /\b(?:when|while|under|upon|during|at\s+\d|in\s+the\s+presence|on\s+contact)\b/i,
+    )[0];
+    const segments = withoutConditions.split(
+      /\s*(?:,|\band\b|\bplus\b|\balong with\b|\bas well as\b)\s*/i,
+    );
+    for (const rawSegment of segments) {
+      const segment = rawSegment
+        .replace(/\([^)]*\)/g, " ")
+        .replace(
+          /^(?:(?:an?|the|strong|highly|hot|cold|aqueous|dilute|concentrated|caustic|corrosive|flammable|gaseous|toxic|irritating|explosive|solid|liquid)\s+)+/i,
+          "",
+        )
+        .replace(/^(?:a\s+)?solutions?\s+of\s+/i, "")
+        .replace(/\s+/g, " ")
+        .trim();
+      if (!segment) continue;
+      const words = segment.match(/[a-z][a-z0-9-]*/gi) ?? [];
+      for (let length = 1; length <= Math.min(5, words.length); length++) {
+        const phrase = words.slice(-length).join(" ");
+        if (length === 1 && genericProductWords.has(phrase.toLowerCase())) continue;
+        queries.add(phrase);
+      }
+      const inferred = segment.match(/^(?:the\s+)?([a-z]+(?:ide|ate|ite))$/i)?.[1];
+      if (inferred) reactants.forEach((reactant) => queries.add(`${reactant.name} ${inferred}`));
+    }
+  }
+  reactants.forEach((reactant) => {
+    queries.delete(reactant.name);
+    queries.delete(reactant.formula);
+  });
+  return [...queries];
+}
+
+async function mapWithConcurrency<T, R>(
+  items: T[],
+  concurrency: number,
+  task: (item: T) => Promise<R>,
+) {
+  const results = Array<R>(items.length);
+  let nextIndex = 0;
+  const worker = async () => {
+    while (nextIndex < items.length) {
+      const index = nextIndex++;
+      results[index] = await task(items[index]);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(concurrency, items.length) }, () => worker()));
+  return results;
+}
+
+function productCombinations(records: StructureRecord[]) {
+  const combinations: StructureRecord[][] = [];
+  const collect = (start: number, selected: StructureRecord[]) => {
+    if (selected.length) combinations.push(selected);
+    if (selected.length === 3) return;
+    for (let index = start; index < records.length; index++)
+      collect(index + 1, [...selected, records[index]]);
+  };
+  collect(0, []);
+  return combinations;
+}
+
+function relevantReactionCondition(
+  text: string,
+  reactants: [StructureRecord, StructureRecord],
+  products: StructureRecord[],
+) {
+  const statements = text
+    .split(/(?<=[.;])\s+|;\s*/)
+    .map((statement) => statement.trim())
+    .filter(Boolean);
+  return statements
+    .map((statement) => {
+      const lower = statement.toLowerCase();
+      const productMentions = products.filter(
+        (product) =>
+          lower.includes(product.name.toLowerCase()) ||
+          lower.includes(product.formula.toLowerCase()),
+      ).length;
+      const reactantMentions = reactants.filter(
+        (reactant) =>
+          lower.includes(reactant.name.toLowerCase()) ||
+          lower.includes(reactant.formula.toLowerCase()),
+      ).length;
+      return {
+        statement,
+        score:
+          productMentions * 4 +
+          reactantMentions * 2 +
+          Number(/react|form|produc|yield|generat|release|evolv|decompos/i.test(statement)),
+      };
+    })
+    .sort((a, b) => b.score - a.score || a.statement.length - b.statement.length)[0]?.statement;
 }
 
 async function discoverReactionChoices(first: MoleculeEntity, second: MoleculeEntity) {
@@ -3505,76 +3697,91 @@ async function discoverReactionChoices(first: MoleculeEntity, second: MoleculeEn
   ].filter((text) => /react|form|decompos|ignite|release/i.test(text));
   if (!facts.length) return [];
 
-  const queries = new Set<string>();
-  facts.slice(0, 6).forEach((text) => {
-    for (const match of text.matchAll(/\b(?:[A-Z][a-z]?\d*){1,8}\b/g)) {
-      const formula = match[0];
-      if (validFormula(formula) && formula !== first.formula && formula !== second.formula)
-        queries.add(formula);
-    }
-    for (const match of text.toLowerCase().matchAll(/\b([a-z]+(?:ide|ate|ite))\b/g)) {
-      queries.add(`${firstRecord.name} ${match[1]}`);
-      queries.add(`${secondRecord.name} ${match[1]}`);
-    }
+  const reactantRecords: [StructureRecord, StructureRecord] = [firstRecord, secondRecord];
+  const factQueries = facts
+    .map((condition) => ({
+      condition,
+      queries: reactionProductQueries(condition, reactantRecords),
+    }))
+    .filter((fact) => fact.queries.length)
+    .sort((a, b) => b.queries.length - a.queries.length || a.condition.length - b.condition.length);
+  const queries = [...new Set(factQueries.flatMap((fact) => fact.queries))]
+    .sort(
+      (a, b) =>
+        Number(/\s/.test(b)) * 4 +
+          Number(/(?:ide|ate|ite)$/i.test(b)) * 2 +
+          Number(/\d/.test(b)) -
+          (Number(/\s/.test(a)) * 4 +
+            Number(/(?:ide|ate|ite)$/i.test(a)) * 2 +
+            Number(/\d/.test(a))) || a.length - b.length,
+    )
+    .slice(0, 20);
+  const resolvedCandidates = await mapWithConcurrency(queries, 2, async (query) => {
+    const result = await lookupStructure(query);
+    if (result.record) return { query, record: result.record };
+    const alternatives = await Promise.all(
+      (result.candidates ?? [])
+        .slice(0, 5)
+        .map((candidate) => lookupStructure(String(candidate.cid))),
+    );
+    const record = alternatives.find((alternative) =>
+      alternative.record ? connectedStructure(alternative.record) : false,
+    )?.record;
+    return { query, record };
   });
-
-  const resolvedCandidates = await Promise.all(
-    [...queries].slice(0, 8).map(async (query) => {
-      const result = await lookupStructure(query);
-      if (result.record) return result.record;
-      const alternatives = await Promise.all(
-        (result.candidates ?? [])
-          .slice(0, 5)
-          .map((candidate) => lookupStructure(String(candidate.cid))),
-      );
-      return alternatives.find((alternative) =>
-        alternative.record ? connectedStructure(alternative.record) : false,
-      )?.record;
-    }),
-  );
-  const candidates = resolvedCandidates.filter((record, index): record is StructureRecord =>
-    Boolean(
+  const recordByQuery = new Map(
+    resolvedCandidates.flatMap(({ query, record }) =>
       record?.cid &&
       connectedStructure(record) &&
-      resolvedCandidates.findIndex((candidate) => candidate?.cid === record.cid) === index,
+      record.cid !== firstRecord.cid &&
+      record.cid !== secondRecord.cid
+        ? [[query, record] as const]
+        : [],
     ),
   );
 
   const routes: ReactionRecipe[] = [];
-  const productSets = candidates.flatMap((candidate, index) => [
-    [candidate],
-    ...candidates.slice(index + 1).map((secondCandidate) => [candidate, secondCandidate]),
-  ]);
-  for (const products of productSets) {
-    const balance = balanceFormulas(
-      [first.formula, second.formula],
-      products.map((product) => product.formula),
-    );
-    if (!balance) continue;
-    const condition =
-      facts.find((text) =>
-        products.every(
-          (product) =>
-            text.toLowerCase().includes(product.name.toLowerCase()) ||
-            text.includes(product.formula),
+  const seenRoutes = new Set<string>();
+  for (const fact of factQueries) {
+    const candidates = fact.queries
+      .map((query) => recordByQuery.get(query))
+      .filter((record, index, records): record is StructureRecord =>
+        Boolean(
+          record?.cid && records.findIndex((candidate) => candidate?.cid === record.cid) === index,
         ),
-      ) ??
-      facts.find((text) => text.toLowerCase().includes(secondRecord.name.toLowerCase())) ??
-      facts[0];
-    routes.push({
-      name: products.map((product) => product.name).join(" + "),
-      condition: condition.length > 240 ? `${condition.slice(0, 237)}…` : condition,
-      reactants: [
-        { formula: first.formula, coefficient: balance.reactants[0] },
-        { formula: second.formula, coefficient: balance.reactants[1] },
-      ],
-      products: products.map((product, index) => ({
-        formula: product.formula,
-        coefficient: balance.products[index],
-        cid: product.cid!,
-      })),
-    });
-    if (routes.length === 4) break;
+      );
+    for (const products of productCombinations(candidates)) {
+      const balance = balanceFormulas(
+        [first.formula, second.formula],
+        products.map((product) => product.formula),
+        [firstRecord.charge ?? 0, secondRecord.charge ?? 0],
+        products.map((product) => product.charge ?? 0),
+      );
+      if (!balance) continue;
+      const condition =
+        relevantReactionCondition(fact.condition, reactantRecords, products) ?? fact.condition;
+      const recipe: ReactionRecipe = {
+        name: products.map((product) => product.name).join(" + "),
+        condition: condition.length > 240 ? `${condition.slice(0, 237)}…` : condition,
+        reactants: [
+          { formula: first.formula, coefficient: balance.reactants[0] },
+          { formula: second.formula, coefficient: balance.reactants[1] },
+        ],
+        products: products.map((product, index) => ({
+          formula: product.formula,
+          coefficient: balance.products[index],
+          cid: product.cid!,
+        })),
+      };
+      const routeKey = recipe.products
+        .map((product) => `${product.cid}:${product.coefficient}`)
+        .sort()
+        .join("|");
+      if (seenRoutes.has(routeKey)) continue;
+      seenRoutes.add(routeKey);
+      routes.push(recipe);
+      if (routes.length === 8) return routes;
+    }
   }
   return routes;
 }

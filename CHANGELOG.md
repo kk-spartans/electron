@@ -1,9 +1,8 @@
 ## [1.1.4](https://github.com/kk-spartans/electron/compare/v1.1.3...v1.1.4) (2026-07-29)
 
-
 ### Bug Fixes
 
-* persist proximity reaction discovery ([90b332d](https://github.com/kk-spartans/electron/commit/90b332d72e70b3c272d75e598edd409909ac2cbd))
+- persist proximity reaction discovery ([90b332d](https://github.com/kk-spartans/electron/commit/90b332d72e70b3c272d75e598edd409909ac2cbd))
 
 ## [1.1.3](https://github.com/kk-spartans/electron/compare/v1.1.2...v1.1.3) (2026-07-29)
 

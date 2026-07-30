@@ -6,6 +6,7 @@ const elementSymbols = new Set(
 
 type PubChemRecord = {
   id?: { id?: { cid?: number } };
+  charge?: number;
   atoms?: { aid?: number[]; element?: number[] };
   bonds?: { aid1?: number[]; aid2?: number[]; order?: number[] };
   coords?: Array<{ aid?: number[]; conformers?: Array<{ x?: number[]; y?: number[] }> }>;
@@ -14,6 +15,7 @@ type PubChemRecord = {
 export type StructureCandidate = { cid: number; name: string; formula: string };
 export type StructureRecord = {
   cid?: number;
+  charge?: number;
   name: string;
   formula: string;
   source: string;
@@ -29,6 +31,13 @@ export type CompoundFacts = { ph: string[]; reactivity: string[] };
 
 const MAX_AGE = 1000 * 60 * 60 * 24 * 7;
 
+function retryDelay(response: Response, attempt: number) {
+  const retryAfter = Number(response.headers.get("retry-after"));
+  return Number.isFinite(retryAfter) && retryAfter > 0
+    ? Math.min(5000, retryAfter * 1000)
+    : 300 * 2 ** attempt;
+}
+
 async function pubchem(path: string) {
   const key = `electron:pubchem:${path}`;
   try {
@@ -39,7 +48,7 @@ async function pubchem(path: string) {
     }
   } catch {}
   let lastStatus = 502;
-  for (let attempt = 0; attempt < 2; attempt++) {
+  for (let attempt = 0; attempt < 4; attempt++) {
     const response = await fetch(`https://pubchem.ncbi.nlm.nih.gov/rest/pug/${path}`, {
       headers: { Accept: "application/json" },
     });
@@ -52,6 +61,8 @@ async function pubchem(path: string) {
     }
     lastStatus = response.status;
     if (response.status < 500 && response.status !== 429) break;
+    if (attempt < 3)
+      await new Promise((resolve) => window.setTimeout(resolve, retryDelay(response, attempt)));
   }
   throw new Error(`PubChem returned ${lastStatus}`);
 }
@@ -65,16 +76,25 @@ async function pubchemView(cid: number) {
       if (Date.now() - parsed.stored < MAX_AGE) return parsed.data;
     }
   } catch {}
-  const response = await fetch(
-    `https://pubchem.ncbi.nlm.nih.gov/rest/pug_view/data/compound/${cid}/JSON`,
-    { headers: { Accept: "application/json" } },
-  );
-  if (!response.ok) throw new Error(`PubChem PUG View returned ${response.status}`);
-  const data = await response.json();
-  try {
-    localStorage.setItem(key, JSON.stringify({ stored: Date.now(), data }));
-  } catch {}
-  return data;
+  let lastStatus = 502;
+  for (let attempt = 0; attempt < 4; attempt++) {
+    const response = await fetch(
+      `https://pubchem.ncbi.nlm.nih.gov/rest/pug_view/data/compound/${cid}/JSON`,
+      { headers: { Accept: "application/json" } },
+    );
+    if (response.ok) {
+      const data = await response.json();
+      try {
+        localStorage.setItem(key, JSON.stringify({ stored: Date.now(), data }));
+      } catch {}
+      return data;
+    }
+    lastStatus = response.status;
+    if (response.status < 500 && response.status !== 429) break;
+    if (attempt < 3)
+      await new Promise((resolve) => window.setTimeout(resolve, retryDelay(response, attempt)));
+  }
+  throw new Error(`PubChem PUG View returned ${lastStatus}`);
 }
 
 function sectionStrings(
@@ -209,6 +229,7 @@ export async function lookupStructure(query: string): Promise<StructureResult> {
     return {
       record: {
         cid: resolvedCid,
+        charge: record.charge ?? 0,
         name: property?.Title ?? raw,
         formula: property?.MolecularFormula ?? formula,
         atoms,

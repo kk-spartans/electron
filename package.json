@@ -3,7 +3,10 @@
   "version": "1.2.0",
   "private": false,
   "scripts": {
-    "dev": "bun run devops/copy-rdkit.ts && next dev",
+    "prepare:data": "bun run devops/build-reaction-index.ts",
+    "prepare:app": "bun run prepare:data && bun run devops/copy-rdkit.ts",
+    "dev": "bun run prepare:app && next dev",
+    "build": "bun run prepare:app && next build",
     "release": "semantic-release --extends ./devops/semantic-release.json"
   },
   "dependencies": {
@@ -11,8 +14,10 @@
     "@phosphor-icons/react": "^2.1.10",
     "@rdkit/rdkit": "2025.3.4-1.0.0",
     "next": "16.2.10",
+    "ord-schema": "0.8.0",
     "react": "19.2.4",
-    "react-dom": "19.2.4"
+    "react-dom": "19.2.4",
+    "yaml": "^2.8.1"
   },
   "devDependencies": {
     "@e18e/cli": "^0.7.0",
@@ -21,6 +26,7 @@
     "@semantic-release/github": "^12.0.8",
     "@semantic-release/npm": "^13.1.5",
     "@tailwindcss/postcss": "^4",
+    "@types/bun": "^1.3.14",
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",

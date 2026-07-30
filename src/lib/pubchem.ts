@@ -16,6 +16,7 @@ export type StructureCandidate = { cid: number; name: string; formula: string };
 export type StructureRecord = {
   cid?: number;
   charge?: number;
+  inchiKey?: string;
   name: string;
   formula: string;
   source: string;
@@ -27,10 +28,7 @@ export type StructureResult = {
   error?: string;
   candidates?: StructureCandidate[];
 };
-export type CompoundFacts = { ph: string[]; reactivity: string[] };
-
 const MAX_AGE = 1000 * 60 * 60 * 24 * 7;
-const pubchemViewCache = new Map<number, Promise<unknown>>();
 
 function retryDelay(response: Response, attempt: number) {
   const retryAfter = Number(response.headers.get("retry-after"));
@@ -66,82 +64,6 @@ async function pubchem(path: string) {
       await new Promise((resolve) => window.setTimeout(resolve, retryDelay(response, attempt)));
   }
   throw new Error(`PubChem returned ${lastStatus}`);
-}
-
-async function pubchemView(cid: number) {
-  const cached = pubchemViewCache.get(cid);
-  if (cached) return cached;
-  const request = (async () => {
-    let lastStatus = 502;
-    for (let attempt = 0; attempt < 4; attempt++) {
-      const response = await fetch(
-        `https://pubchem.ncbi.nlm.nih.gov/rest/pug_view/data/compound/${cid}/JSON`,
-        { headers: { Accept: "application/json" } },
-      );
-      if (response.ok) return response.json();
-      lastStatus = response.status;
-      if (response.status < 500 && response.status !== 429) break;
-      if (attempt < 3)
-        await new Promise((resolve) => window.setTimeout(resolve, retryDelay(response, attempt)));
-    }
-    throw new Error(`PubChem PUG View returned ${lastStatus}`);
-  })();
-  pubchemViewCache.set(cid, request);
-  try {
-    return await request;
-  } catch (error) {
-    pubchemViewCache.delete(cid);
-    throw error;
-  }
-}
-
-function sectionStrings(
-  value: unknown,
-  path: string[] = [],
-): Array<{ path: string; text: string }> {
-  if (typeof value === "string") return [{ path: path.join(" › "), text: value }];
-  if (Array.isArray(value)) return value.flatMap((item) => sectionStrings(item, path));
-  if (!value || typeof value !== "object") return [];
-  const record = value as Record<string, unknown>;
-  const heading = typeof record.TOCHeading === "string" ? record.TOCHeading : undefined;
-  return Object.entries(record).flatMap(([key, item]) =>
-    sectionStrings(item, heading ? [...path, heading] : key === "Section" ? path : path),
-  );
-}
-
-export async function lookupCompoundFacts(cid: number): Promise<CompoundFacts> {
-  try {
-    const view = await pubchemView(cid);
-    const strings = sectionStrings(view);
-    const unique = (items: string[]) => [
-      ...new Set(items.map((item) => item.trim()).filter(Boolean)),
-    ];
-    return {
-      ph: unique(
-        strings
-          .filter((item) => /\bpH\b/i.test(item.path) || /\bpH\s*[:=]/i.test(item.text))
-          .map((item) => item.text),
-      ).slice(0, 3),
-      reactivity: unique(
-        strings.filter((item) => /reactiv|reaction/i.test(item.path)).map((item) => item.text),
-      )
-        .filter(
-          (text) =>
-            text.length >= 20 &&
-            !/^https?:/i.test(text) &&
-            !/^(stability and reactivity|reactivity profile)$/i.test(text),
-        )
-        .sort(
-          (first, second) =>
-            Number(/reacts? with|to form|forming|produces?|releases?|decomposes?/i.test(second)) -
-              Number(/reacts? with|to form|forming|produces?|releases?|decomposes?/i.test(first)) ||
-            first.length - second.length,
-        )
-        .slice(0, 100),
-    };
-  } catch {
-    return { ph: [], reactivity: [] };
-  }
 }
 
 export async function lookupStructure(query: string): Promise<StructureResult> {
@@ -221,8 +143,12 @@ export async function lookupStructure(query: string): Promise<StructureResult> {
     }));
     const resolvedCid = record.id?.id?.cid;
     const properties = resolvedCid
-      ? ((await pubchem(`compound/cid/${resolvedCid}/property/Title,MolecularFormula/JSON`)) as {
-          PropertyTable?: { Properties?: Array<{ Title?: string; MolecularFormula?: string }> };
+      ? ((await pubchem(
+          `compound/cid/${resolvedCid}/property/Title,MolecularFormula,InChIKey/JSON`,
+        )) as {
+          PropertyTable?: {
+            Properties?: Array<{ Title?: string; MolecularFormula?: string; InChIKey?: string }>;
+          };
         })
       : undefined;
     const property = properties?.PropertyTable?.Properties?.[0];
@@ -230,6 +156,7 @@ export async function lookupStructure(query: string): Promise<StructureResult> {
       record: {
         cid: resolvedCid,
         charge: record.charge ?? 0,
+        inchiKey: property?.InChIKey,
         name: property?.Title ?? raw,
         formula: property?.MolecularFormula ?? formula,
         atoms,

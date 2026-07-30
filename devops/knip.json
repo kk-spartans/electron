@@ -1,6 +1,6 @@
 {
   "$schema": "https://knip.dev/schema.json",
-  "entry": ["src/app/**/*.{ts,tsx}", "devops/check.ts", "devops/copy-rdkit.ts"],
+  "entry": ["src/app/**/*.{ts,tsx}", "devops/check.ts", "devops/ord-index-worker.ts"],
   "project": ["src/**/*.{ts,tsx,css}", "devops/*.ts"],
   "ignoreDependencies": [
     "@e18e/cli",
@@ -9,7 +9,6 @@
     "@semantic-release/github",
     "@semantic-release/npm",
     "react-doctor",
-    "tailwindcss",
     "oxfmt",
     "oxlint",
     "oxlint-tsgolint"

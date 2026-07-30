@@ -48,7 +48,7 @@ in
   };
 
   enterShell = ''
-    bun run devops/copy-rdkit.ts
+    bun run prepare:app
   '';
 
   tasks = {

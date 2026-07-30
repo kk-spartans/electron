@@ -35,9 +35,9 @@ const steps: Step[] = [
     args: ["protect", "--staged", "--redact", "--verbose"],
   },
   {
-    name: "rdkit-prepare",
+    name: "app-prepare",
     command: "bun",
-    args: ["run", "devops/copy-rdkit.ts"],
+    args: ["run", "prepare:app"],
   },
   {
     name: "build",

@@ -5,7 +5,8 @@ RUN bun install --frozen-lockfile
 
 FROM deps AS build
 COPY . .
-RUN bun run devops/copy-rdkit.ts && bun next build
+RUN --mount=type=cache,target=/app/.cache/ord \
+    bun run build
 
 FROM nginxinc/nginx-unprivileged:1.29-alpine AS runtime
 COPY --from=build /app/out /usr/share/nginx/html

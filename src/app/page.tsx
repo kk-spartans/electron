@@ -14,12 +14,8 @@ import {
 import AtomScene, { Subshell, subshellColors } from "@/components/AtomScene";
 import periodicTable from "@exabyte-io/periodic-table.js/periodic-table.json";
 import { loadRDKit, validateStructure } from "@/lib/rdkit";
-import {
-  lookupCompoundFacts,
-  lookupStructure,
-  type StructureCandidate,
-  type StructureRecord,
-} from "@/lib/pubchem";
+import { lookupStructure, type StructureCandidate, type StructureRecord } from "@/lib/pubchem";
+import { lookupReportedReactions } from "@/lib/reactions";
 
 type ElementKey = string;
 type AtomNode = {
@@ -226,103 +222,6 @@ type ElementData = {
   note: string;
 };
 
-const coreElements: Record<string, ElementData> = {
-  H: {
-    name: "Hydrogen",
-    z: 1,
-    shells: [1],
-    config: "1s¹",
-    valence: 1,
-    subshells: [{ label: "1s", count: 1, shell: 1, kind: "s" }],
-    note: "One 1s electron can be shared or transferred.",
-  },
-  C: {
-    name: "Carbon",
-    z: 6,
-    shells: [2, 4],
-    config: "1s² 2s² 2p²",
-    valence: 4,
-    subshells: [
-      { label: "1s", count: 2, shell: 1, kind: "s" },
-      { label: "2s", count: 2, shell: 2, kind: "s" },
-      { label: "2p", count: 2, shell: 2, kind: "p" },
-    ],
-    note: "Four valence electrons let carbon form varied covalent structures.",
-  },
-  N: {
-    name: "Nitrogen",
-    z: 7,
-    shells: [2, 5],
-    config: "1s² 2s² 2p³",
-    valence: 5,
-    subshells: [
-      { label: "1s", count: 2, shell: 1, kind: "s" },
-      { label: "2s", count: 2, shell: 2, kind: "s" },
-      { label: "2p", count: 3, shell: 2, kind: "p" },
-    ],
-    note: "Three unpaired 2p electrons commonly produce three covalent bonds.",
-  },
-  O: {
-    name: "Oxygen",
-    z: 8,
-    shells: [2, 6],
-    config: "1s² 2s² 2p⁴",
-    valence: 6,
-    subshells: [
-      { label: "1s", count: 2, shell: 1, kind: "s" },
-      { label: "2s", count: 2, shell: 2, kind: "s" },
-      { label: "2p", count: 4, shell: 2, kind: "p" },
-    ],
-    note: "Two vacancies in the valence shell favor two covalent bonds.",
-  },
-  Na: {
-    name: "Sodium",
-    z: 11,
-    shells: [2, 8, 1],
-    config: "[Ne] 3s¹",
-    valence: 1,
-    subshells: [
-      { label: "1s", count: 2, shell: 1, kind: "s" },
-      { label: "2s", count: 2, shell: 2, kind: "s" },
-      { label: "2p", count: 6, shell: 2, kind: "p" },
-      { label: "3s", count: 1, shell: 3, kind: "s" },
-    ],
-    note: "The lone 3s electron is readily transferred to form Na⁺.",
-  },
-  Cl: {
-    name: "Chlorine",
-    z: 17,
-    shells: [2, 8, 7],
-    config: "[Ne] 3s² 3p⁵",
-    valence: 7,
-    subshells: [
-      { label: "1s", count: 2, shell: 1, kind: "s" },
-      { label: "2s", count: 2, shell: 2, kind: "s" },
-      { label: "2p", count: 6, shell: 2, kind: "p" },
-      { label: "3s", count: 2, shell: 3, kind: "s" },
-      { label: "3p", count: 5, shell: 3, kind: "p" },
-    ],
-    note: "One 3p vacancy makes electron gain or one shared pair favorable.",
-  },
-  Fe: {
-    name: "Iron",
-    z: 26,
-    shells: [2, 8, 14, 2],
-    config: "[Ar] 3d⁶ 4s²",
-    valence: 2,
-    subshells: [
-      { label: "1s", count: 2, shell: 1, kind: "s" },
-      { label: "2s", count: 2, shell: 2, kind: "s" },
-      { label: "2p", count: 6, shell: 2, kind: "p" },
-      { label: "3s", count: 2, shell: 3, kind: "s" },
-      { label: "3p", count: 6, shell: 3, kind: "p" },
-      { label: "3d", count: 6, shell: 3, kind: "d" },
-      { label: "4s", count: 2, shell: 4, kind: "s" },
-    ],
-    note: "4s electrons are typically removed before 3d electrons in iron ions.",
-  },
-};
-
 const allSymbols =
   "H He Li Be B C N O F Ne Na Mg Al Si P S Cl Ar K Ca Sc Ti V Cr Mn Fe Co Ni Cu Zn Ga Ge As Se Br Kr Rb Sr Y Zr Nb Mo Tc Ru Rh Pd Ag Cd In Sn Sb Te I Xe Cs Ba La Ce Pr Nd Pm Sm Eu Gd Tb Dy Ho Er Tm Yb Lu Hf Ta W Re Os Ir Pt Au Hg Tl Pb Bi Po At Rn Fr Ra Ac Th Pa U Np Pu Am Cm Bk Cf Es Fm Md No Lr Rf Db Sg Bh Hs Mt Ds Rg Cn Nh Fl Mc Lv Ts Og".split(
     " ",
@@ -378,10 +277,7 @@ function generatedElement(symbol: string, z: number): ElementData {
   };
 }
 const elements: Record<string, ElementData> = Object.fromEntries(
-  allSymbols.map((symbol, index) => [
-    symbol,
-    coreElements[symbol] ?? generatedElement(symbol, index + 1),
-  ]),
+  allSymbols.map((symbol, index) => [symbol, generatedElement(symbol, index + 1)]),
 );
 const metals = new Set(
   "Li Be Na Mg Al K Ca Sc Ti V Cr Mn Fe Co Ni Cu Zn Ga Rb Sr Y Zr Nb Mo Tc Ru Rh Pd Ag Cd In Sn Cs Ba La Ce Pr Nd Pm Sm Eu Gd Tb Dy Ho Er Tm Yb Lu Hf Ta W Re Os Ir Pt Au Hg Tl Pb Bi Fr Ra Ac Th Pa U Np Pu Am Cm Bk Cf Es Fm Md No Lr Rf Db Sg Bh Hs Mt Ds Rg Cn Nh Fl Mc Lv".split(
@@ -554,8 +450,8 @@ export default function Home() {
   const periodicPresence = useAnimatedPresence(periodicOpen);
   const saveDialogPresence = useAnimatedPresence(saveDialogOpen);
   const formulaPresence = useAnimatedPresence(formulaOpen);
-  const [valenceFilter, setValenceFilter] = useState("all");
-  const [characterFilter, setCharacterFilter] = useState("all");
+  const [valenceFilters, setValenceFilters] = useState<Set<number>>(() => new Set());
+  const [characterFilters, setCharacterFilters] = useState<Set<string>>(() => new Set());
   const [formulaGroups, setFormulaGroups] = useState<FormulaGroup[]>([]);
   const [recognizedCompounds, setRecognizedCompounds] = useState<RecognizedCompound[]>([]);
   const [selectedMolecule, setSelectedMolecule] = useState<number | null>(null);
@@ -578,7 +474,9 @@ export default function Home() {
   const [validationNotice, setValidationNotice] = useState("");
   const validationNoticePresence = useAnimatedPresence(Boolean(validationNotice), 400);
   const lastValidationNotice = useRef("");
-  if (validationNotice) lastValidationNotice.current = validationNotice;
+  useEffect(() => {
+    if (validationNotice) lastValidationNotice.current = validationNotice;
+  }, [validationNotice]);
   const [canvasNavigationHint, setCanvasNavigationHint] = useState(false);
   const canvasNavigationHintShown = useRef(false);
   const [selectionBox, setSelectionBox] = useState<{
@@ -1088,12 +986,11 @@ export default function Home() {
     return pairs.sort((first, second) => first.distance - second.distance);
   }, [selectedReactants]);
 
-  const reactionContextEntities =
-    reactionPairRef.current
-      ? [reactionPairRef.current.first, reactionPairRef.current.second]
-      : reactionCandidate?.pairs[0]
-        ? [reactionCandidate.pairs[0].first, reactionCandidate.pairs[0].second]
-        : selectedReactants;
+  const reactionContextEntities = reactionPairRef.current
+    ? [reactionPairRef.current.first, reactionPairRef.current.second]
+    : reactionCandidate?.pairs[0]
+      ? [reactionCandidate.pairs[0].first, reactionCandidate.pairs[0].second]
+      : selectedReactants;
 
   const reactionMenuPosition = useMemo(() => {
     if (!reactionContextEntities.length) return undefined;
@@ -1130,10 +1027,7 @@ export default function Home() {
     if (!reactionCandidate || preparedReaction) return;
     const selectedIds = new Set(selected);
     const originalReactantIds = new Set(
-      reactionCandidate.pairs.flatMap((pair) => [
-        ...pair.first.atomIds,
-        ...pair.second.atomIds,
-      ]),
+      reactionCandidate.pairs.flatMap((pair) => [...pair.first.atomIds, ...pair.second.atomIds]),
     );
     if ([...originalReactantIds].every((atomId) => selectedIds.has(atomId))) return;
     reactionPairRef.current = null;
@@ -1742,13 +1636,11 @@ export default function Home() {
       formulaGroupsRef.current = [...formulaGroupsRef.current, group];
       setFormulaGroups(formulaGroupsRef.current);
     }
-    setCompressedGroups((current) => {
-      const next = new Set(current);
-      if (next.has(groupId)) next.delete(groupId);
-      else next.add(groupId);
-      compressedGroupsRef.current = next;
-      return next;
-    });
+    const next = new Set(compressedGroupsRef.current);
+    if (next.has(groupId)) next.delete(groupId);
+    else next.add(groupId);
+    compressedGroupsRef.current = next;
+    setCompressedGroups(next);
   }
 
   function currentCanvasDocument(): CanvasDocument {
@@ -1998,9 +1890,8 @@ export default function Home() {
                   (candidate) =>
                     candidate.order === 2 &&
                     (candidate.from === neighborId || candidate.to === neighborId) &&
-                    atomById.get(
-                      candidate.from === neighborId ? candidate.to : candidate.from,
-                    )?.element === "O",
+                    atomById.get(candidate.from === neighborId ? candidate.to : candidate.from)
+                      ?.element === "O",
                 )
               );
             });
@@ -2009,8 +1900,7 @@ export default function Home() {
               atom,
               attached,
               score:
-                (({ N: 100, P: 80, O: 60, S: 50 } as Record<string, number>)[atom.element] ??
-                  0) -
+                (({ N: 100, P: 80, O: 60, S: 50 } as Record<string, number>)[atom.element] ?? 0) -
                 bondOrder * 3 -
                 Number(acylAttached) * 60,
               available: bondOrder <= capacity,
@@ -2024,18 +1914,11 @@ export default function Home() {
           .map((bond) => atomById.get(bond.from === acceptor.atom.id ? bond.to : bond.from))
           .filter((atom): atom is AtomNode => Boolean(atom));
         const neighborCenter = {
-          x:
-            neighbors.reduce((sum, atom) => sum + atom.x, 0) /
-            Math.max(1, neighbors.length),
-          y:
-            neighbors.reduce((sum, atom) => sum + atom.y, 0) /
-            Math.max(1, neighbors.length),
+          x: neighbors.reduce((sum, atom) => sum + atom.x, 0) / Math.max(1, neighbors.length),
+          y: neighbors.reduce((sum, atom) => sum + atom.y, 0) / Math.max(1, neighbors.length),
         };
         const directionLength =
-          Math.hypot(
-            acceptor.atom.x - neighborCenter.x,
-            acceptor.atom.y - neighborCenter.y,
-          ) || 1;
+          Math.hypot(acceptor.atom.x - neighborCenter.x, acceptor.atom.y - neighborCenter.y) || 1;
         hydrogen.x =
           acceptor.atom.x + ((acceptor.atom.x - neighborCenter.x) / directionLength) * 185;
         hydrogen.y =
@@ -2109,14 +1992,37 @@ export default function Home() {
 
   function periodicMatch(symbol: string) {
     const valenceMatches =
-      valenceFilter === "all" || elements[symbol].valence === Number(valenceFilter);
+      valenceFilters.size === 0 || valenceFilters.has(elements[symbol].valence);
     const en = pauling(symbol);
+    const character =
+      en === 0
+        ? null
+        : en >= 2.5
+          ? "electronegative"
+          : en > 1.5
+            ? "intermediate"
+            : "electropositive";
     const characterMatches =
-      characterFilter === "all" ||
-      (characterFilter === "electronegative" && en >= 2.5) ||
-      (characterFilter === "intermediate" && en > 1.5 && en < 2.5) ||
-      (characterFilter === "electropositive" && en > 0 && en <= 1.5);
+      characterFilters.size === 0 || (character !== null && characterFilters.has(character));
     return valenceMatches && characterMatches;
+  }
+
+  function toggleValenceFilter(value: number) {
+    setValenceFilters((current) => {
+      const next = new Set(current);
+      if (next.has(value)) next.delete(value);
+      else next.add(value);
+      return next;
+    });
+  }
+
+  function toggleCharacterFilter(value: string) {
+    setCharacterFilters((current) => {
+      const next = new Set(current);
+      if (next.has(value)) next.delete(value);
+      else next.add(value);
+      return next;
+    });
   }
 
   function dropPeriodicAtom(event: React.DragEvent, symbol: string) {
@@ -2719,6 +2625,7 @@ export default function Home() {
                 type="button"
                 className="structure-lookup toolbar-action"
                 aria-keyshortcuts="Control+Space"
+                title="Add molecule · Ctrl + Space"
                 onClick={() => {
                   setFormulaOpen(true);
                   setFormulaError("");
@@ -2726,20 +2633,15 @@ export default function Home() {
                 }}
               >
                 <MagnifyingGlass /> Add molecule
-                <span className="shortcut-tooltip" role="tooltip">
-                  Shortcut: Ctrl + Space
-                </span>
               </button>
               <button
                 type="button"
                 className="save-canvas toolbar-action"
                 aria-keyshortcuts="Control+Shift+S"
+                title="Save canvas · Ctrl + Shift + S"
                 onClick={() => setSaveDialogOpen(true)}
               >
                 <FloppyDisk /> Save
-                <span className="shortcut-tooltip" role="tooltip">
-                  Save As · Ctrl + Shift + S
-                </span>
               </button>
             </div>
             {(reactionSearching || reactionSearchEmpty) && (
@@ -2787,16 +2689,12 @@ export default function Home() {
                 style={reactionMenuPosition}
                 onPointerDown={(event) => event.stopPropagation()}
               >
-                <header>
-                  <small>
-                    {preparedReaction ? "Balanced on canvas" : "Possible reactions"}
-                  </small>
-                  <strong>
-                    {preparedReaction
-                      ? "The required reactants are now present."
-                      : `Choose a reaction for ${selectedReactantNames}.`}
-                  </strong>
-                </header>
+                {!preparedReaction && (
+                  <header>
+                    <small>Possible reactions</small>
+                    <strong>Choose a reaction for {selectedReactantNames}.</strong>
+                  </header>
+                )}
                 <div className="reaction-options">
                   {(preparedReaction ? [preparedReaction.recipe] : reactionChoices).map(
                     (recipe) => (
@@ -2806,39 +2704,41 @@ export default function Home() {
                           <em>{recipe.name}</em>
                           <small>{recipe.condition}</small>
                         </span>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            if (preparedReaction) {
-                              void runReaction();
-                              return;
-                            }
-                            const prepared = prepareReaction(recipe);
-                            if (
-                              prepared &&
-                              recipe.reactants.every((reactant) => reactant.coefficient === 1)
-                            )
-                              void runReaction(prepared);
-                          }}
-                        >
-                          {preparedReaction ||
-                          recipe.reactants.every((reactant) => reactant.coefficient === 1)
-                            ? "React"
-                            : "Balance"}
-                        </button>
+                        <div className="reaction-actions">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (preparedReaction) {
+                                void runReaction();
+                                return;
+                              }
+                              const prepared = prepareReaction(recipe);
+                              if (
+                                prepared &&
+                                recipe.reactants.every((reactant) => reactant.coefficient === 1)
+                              )
+                                void runReaction(prepared);
+                            }}
+                          >
+                            {preparedReaction ||
+                            recipe.reactants.every((reactant) => reactant.coefficient === 1)
+                              ? "React"
+                              : "Balance"}
+                          </button>
+                          {preparedReaction && (
+                            <button
+                              type="button"
+                              className="reaction-cancel"
+                              onClick={cancelPreparedReaction}
+                            >
+                              Cancel
+                            </button>
+                          )}
+                        </div>
                       </article>
                     ),
                   )}
                 </div>
-                {preparedReaction && (
-                  <button
-                    type="button"
-                    className="reaction-cancel"
-                    onClick={cancelPreparedReaction}
-                  >
-                    Cancel balance
-                  </button>
-                )}
               </div>
             )}
             <div
@@ -2868,21 +2768,6 @@ export default function Home() {
                       );
                     const fromColor = subshellColors[fromSubshells.at(-1)?.kind ?? "s"],
                       toColor = subshellColors[toSubshells.at(-1)?.kind ?? "s"];
-                    const superoxide =
-                      bond.type === "covalent" &&
-                      bond.order === 1 &&
-                      from.element === "O" &&
-                      to.element === "O" &&
-                      bonds.some(
-                        (item) =>
-                          item.type === "ionic" &&
-                          [item.from, item.to].some(
-                            (atomId) => atomId === from.id || atomId === to.id,
-                          ) &&
-                          [item.from, item.to].some(
-                            (atomId) => atomById.get(atomId)?.element === "Li",
-                          ),
-                      );
                     return (
                       <g
                         key={bond.id}
@@ -2911,11 +2796,6 @@ export default function Home() {
                               />
                             </g>
                           ))}
-                        {superoxide && (
-                          <text className="delocalized-charge" x={mx} y={my - 18 * scale}>
-                            −1 over O₂
-                          </text>
-                        )}
                       </g>
                     );
                   })}
@@ -2963,12 +2843,7 @@ export default function Home() {
                       dur="700ms"
                       fill="freeze"
                     />
-                    <animate
-                      attributeName="opacity"
-                      values="0;1;1;0"
-                      dur="850ms"
-                      fill="freeze"
-                    />
+                    <animate attributeName="opacity" values="0;1;1;0" dur="850ms" fill="freeze" />
                   </circle>
                 ))}
                 {active &&
@@ -3222,9 +3097,7 @@ export default function Home() {
                       role="button"
                       tabIndex={0}
                       className={`canvas-atom ${isSelected ? "selected" : ""}${
-                        reactionSourceAtomIds.has(atom.id) && !isSelected
-                          ? " reaction-source"
-                          : ""
+                        reactionSourceAtomIds.has(atom.id) && !isSelected ? " reaction-source" : ""
                       }`}
                       style={{
                         width: atomSize,
@@ -3547,13 +3420,6 @@ export default function Home() {
                 <AtomLearning atom={active} atoms={atoms} bonds={bonds} />
                 <ElementPlacement symbol={active.element} />
                 <section>
-                  <h2>pH</h2>
-                  <p>
-                    An isolated {activeElement.name.toLowerCase()} atom has no pH. pH applies when a
-                    substance is dissolved in water, and depends on concentration and temperature.
-                  </p>
-                </section>
-                <section>
                   <h2>Why it changes</h2>
                   <p>{activeElement.note}</p>
                   {active.charge !== 0 && (
@@ -3652,32 +3518,40 @@ export default function Home() {
                   <h1>Periodic table</h1>
                 </div>
                 <div className="periodic-filters">
-                  <label>
-                    Valence
-                    <select
-                      value={valenceFilter}
-                      onChange={(event) => setValenceFilter(event.target.value)}
-                    >
-                      <option value="all">All</option>
-                      {Array.from({ length: 8 }, (_, index) => (
-                        <option key={index + 1} value={index + 1}>
-                          {index + 1} electron{index === 0 ? "" : "s"}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <label>
-                    Character
-                    <select
-                      value={characterFilter}
-                      onChange={(event) => setCharacterFilter(event.target.value)}
-                    >
-                      <option value="all">All</option>
-                      <option value="electronegative">Electronegative</option>
-                      <option value="intermediate">Intermediate</option>
-                      <option value="electropositive">Electropositive</option>
-                    </select>
-                  </label>
+                  <div className="periodic-filter-group" aria-label="Filter by valence electrons">
+                    <span>Valence</span>
+                    {Array.from({ length: 8 }, (_, index) => index + 1).map((value) => (
+                      <button
+                        type="button"
+                        key={value}
+                        className={valenceFilters.has(value) ? "selected" : ""}
+                        aria-pressed={valenceFilters.has(value)}
+                        onClick={() => toggleValenceFilter(value)}
+                        onPointerUp={(event) => event.currentTarget.blur()}
+                      >
+                        {value}e⁻
+                      </button>
+                    ))}
+                  </div>
+                  <div className="periodic-filter-group" aria-label="Filter by character">
+                    <span>Character</span>
+                    {[
+                      ["electropositive", "Electropositive"],
+                      ["intermediate", "Intermediate"],
+                      ["electronegative", "Electronegative"],
+                    ].map(([value, label]) => (
+                      <button
+                        type="button"
+                        key={value}
+                        className={characterFilters.has(value) ? "selected" : ""}
+                        aria-pressed={characterFilters.has(value)}
+                        onClick={() => toggleCharacterFilter(value)}
+                        onPointerUp={(event) => event.currentTarget.blur()}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
                 </div>
                 <button
                   type="button"
@@ -3691,12 +3565,13 @@ export default function Home() {
                 {periodicMain.flatMap((row, rowIndex) =>
                   row.map(([symbol, column]) => {
                     const item = elements[symbol],
-                      matches = periodicMatch(symbol);
+                      matches = periodicMatch(symbol),
+                      filtering = valenceFilters.size > 0 || characterFilters.size > 0;
                     return (
                       <button
                         type="button"
                         key={symbol}
-                        className={matches ? "" : "filtered"}
+                        className={matches ? (filtering ? "matching" : "") : "filtered"}
                         disabled={!matches}
                         draggable={matches}
                         style={{ gridColumn: column, gridRow: rowIndex + 1 }}
@@ -3723,12 +3598,15 @@ export default function Home() {
                 {periodicFBlock.flatMap((row, rowIndex) =>
                   row.map((symbol, index) => {
                     const item = elements[symbol],
-                      matches = periodicMatch(symbol);
+                      matches = periodicMatch(symbol),
+                      filtering = valenceFilters.size > 0 || characterFilters.size > 0;
                     return (
                       <button
                         type="button"
                         key={symbol}
-                        className={matches ? "f-block" : "f-block filtered"}
+                        className={
+                          matches ? `f-block${filtering ? " matching" : ""}` : "f-block filtered"
+                        }
                         disabled={!matches}
                         draggable={matches}
                         style={{ gridColumn: index + 4, gridRow: rowIndex + 8 }}
@@ -3821,6 +3699,7 @@ export default function Home() {
                 <label>
                   <input
                     autoFocus
+                    aria-label="PubChem structure name or formula"
                     value={formulaInput}
                     onChange={(event) => {
                       setFormulaInput(event.target.value);
@@ -3952,10 +3831,6 @@ function MoleculeInspector({
             {ionic.length} ionic interaction{ionic.length === 1 ? " is" : "s are"} shown.
           </p>
         )}
-      </section>
-      <section>
-        <h2>pH</h2>
-        <MoleculePh cid={group.cid} />
       </section>
       <section>
         <h2>Canvas interaction</h2>
@@ -4155,16 +4030,6 @@ function formulaCounts(formula: string) {
   );
 }
 
-function validFormula(formula: string) {
-  const tokens = [...plainFormula(formula).matchAll(/([A-Z][a-z]?)(\d*)/g)];
-  return (
-    tokens.length > 0 &&
-    tokens.map((match) => match[0]).join("") === plainFormula(formula) &&
-    tokens.every((match) => match[1] in elements) &&
-    tokens.reduce((total, match) => total + (Number(match[2]) || 1), 0) <= 30
-  );
-}
-
 function connectedStructure(record: StructureRecord) {
   if (record.atoms.length <= 1) return true;
   const adjacency = new Map<number, number[]>();
@@ -4188,8 +4053,7 @@ function usableReactionProduct(record: StructureRecord) {
   const symbols = record.atoms.map((atom) => allSymbols[atom.atomicNumber - 1]);
   return symbols.some((first, firstIndex) =>
     symbols.some(
-      (second, secondIndex) =>
-        secondIndex > firstIndex && metals.has(first) !== metals.has(second),
+      (second, secondIndex) => secondIndex > firstIndex && metals.has(first) !== metals.has(second),
     ),
   );
 }
@@ -4282,83 +4146,6 @@ function balanceFormulas(
   };
 }
 
-const genericProductWords = new Set([
-  "air",
-  "combustion",
-  "explosion",
-  "fire",
-  "flame",
-  "fume",
-  "fumes",
-  "gas",
-  "gases",
-  "heat",
-  "mixture",
-  "product",
-  "products",
-  "solution",
-  "solutions",
-  "vapor",
-  "vapors",
-]);
-
-function reactionProductQueries(text: string, reactants: [StructureRecord, StructureRecord]) {
-  const queries = new Set<string>();
-  const clauses = text
-    .replace(/\[[^\]]*]/g, " ")
-    .split(/(?<=[.;])\s+|;\s*/)
-    .filter((clause) =>
-      /form|produc|yield|generat|release|evolv|liberat|decompos|\bgiv/i.test(clause),
-    );
-  const productTails: string[] = [];
-  for (const clause of clauses) {
-    for (const match of clause.matchAll(
-      /(?:to\s+(?:form|give)|forming|forms?|produces?|yields?|generates?|releases?|evolves?|liberates?|gives?(?:\s+off)?|decomposes?\s+(?:to|into))\s+([^.;]+)/gi,
-    ))
-      productTails.push(match[1]);
-    const passive = clause.match(
-      /([^.;]+?)\s+(?:is|are)\s+(?:formed|produced|generated|released)\b/i,
-    );
-    if (passive) productTails.push(passive[1].split(",").at(-1) ?? passive[1]);
-  }
-
-  for (const tail of productTails) {
-    for (const match of tail.matchAll(/\b(?:[A-Z][a-z]?\d*){1,8}\b/g))
-      if (validFormula(match[0])) queries.add(match[0]);
-    const withoutConditions = tail.split(
-      /\b(?:when|while|under|upon|during|at\s+\d|in\s+the\s+presence|on\s+contact)\b/i,
-    )[0];
-    const segments = withoutConditions.split(
-      /\s*(?:,|\band\b|\bplus\b|\balong with\b|\bas well as\b)\s*/i,
-    );
-    for (const rawSegment of segments) {
-      const segment = rawSegment
-        .replace(/\([^)]*\)/g, " ")
-        .replace(
-          /^(?:(?:an?|the|strong|highly|hot|cold|aqueous|dilute|concentrated|caustic|corrosive|flammable|gaseous|toxic|irritating|explosive|solid|liquid)\s+)+/i,
-          "",
-        )
-        .replace(/^(?:a\s+)?solutions?\s+of\s+/i, "")
-        .replace(/\s+/g, " ")
-        .trim();
-      if (!segment) continue;
-      const words = segment.match(/[a-z][a-z0-9-]*/gi) ?? [];
-      for (let length = 1; length <= Math.min(5, words.length); length++) {
-        const phrase = words.slice(-length).join(" ");
-        if (length === 1 && genericProductWords.has(phrase.toLowerCase())) continue;
-        queries.add(phrase);
-      }
-      const inferred = segment.match(/^(?:the\s+)?([a-z]+(?:ide|ate|ite))$/i)?.[1];
-      if (inferred) reactants.forEach((reactant) => queries.add(`${reactant.name} ${inferred}`));
-    }
-  }
-  reactants.forEach((reactant) => {
-    queries.delete(reactant.name);
-    queries.delete(reactant.formula);
-  });
-  return [...queries];
-}
-
 async function mapWithConcurrency<T, R>(
   items: T[],
   concurrency: number,
@@ -4376,51 +4163,6 @@ async function mapWithConcurrency<T, R>(
   return results;
 }
 
-function productCombinations(records: StructureRecord[]) {
-  const combinations: StructureRecord[][] = [];
-  const collect = (start: number, selected: StructureRecord[]) => {
-    if (selected.length) combinations.push(selected);
-    if (selected.length === 3) return;
-    for (let index = start; index < records.length; index++)
-      collect(index + 1, [...selected, records[index]]);
-  };
-  collect(0, []);
-  return combinations;
-}
-
-function relevantReactionCondition(
-  text: string,
-  reactants: [StructureRecord, StructureRecord],
-  products: StructureRecord[],
-) {
-  const statements = text
-    .split(/(?<=[.;])\s+|;\s*/)
-    .map((statement) => statement.trim())
-    .filter(Boolean);
-  return statements
-    .map((statement) => {
-      const lower = statement.toLowerCase();
-      const productMentions = products.filter(
-        (product) =>
-          lower.includes(product.name.toLowerCase()) ||
-          lower.includes(product.formula.toLowerCase()),
-      ).length;
-      const reactantMentions = reactants.filter(
-        (reactant) =>
-          lower.includes(reactant.name.toLowerCase()) ||
-          lower.includes(reactant.formula.toLowerCase()),
-      ).length;
-      return {
-        statement,
-        score:
-          productMentions * 4 +
-          reactantMentions * 2 +
-          Number(/react|form|produc|yield|generat|release|evolv|decompos/i.test(statement)),
-      };
-    })
-    .sort((a, b) => b.score - a.score || a.statement.length - b.statement.length)[0]?.statement;
-}
-
 async function discoverReactionChoices(first: MoleculeEntity, second: MoleculeEntity) {
   const resolve = async (entity: MoleculeEntity) => {
     const result = await lookupStructure(
@@ -4429,108 +4171,56 @@ async function discoverReactionChoices(first: MoleculeEntity, second: MoleculeEn
     return result.record;
   };
   const [firstRecord, secondRecord] = await Promise.all([resolve(first), resolve(second)]);
-  if (!firstRecord?.cid || !secondRecord?.cid) return [];
-  const [firstFacts, secondFacts] = await Promise.all([
-    lookupCompoundFacts(firstRecord.cid),
-    lookupCompoundFacts(secondRecord.cid),
-  ]);
-  const mentions = (text: string, record: StructureRecord) => {
-    const lower = text.toLowerCase();
-    return (
-      lower.includes(record.name.toLowerCase()) || lower.includes(record.formula.toLowerCase())
-    );
-  };
-  const facts = [
-    ...firstFacts.reactivity.filter((text) => mentions(text, secondRecord)),
-    ...secondFacts.reactivity.filter((text) => mentions(text, firstRecord)),
-  ].filter((text) => /react|form|decompos|ignite|release/i.test(text));
-  if (!facts.length) return [];
-
-  const reactantRecords: [StructureRecord, StructureRecord] = [firstRecord, secondRecord];
-  const factQueries = facts
-    .map((condition) => ({
-      condition,
-      queries: reactionProductQueries(condition, reactantRecords),
-    }))
-    .filter((fact) => fact.queries.length)
-    .sort((a, b) => b.queries.length - a.queries.length || a.condition.length - b.condition.length);
-  const queries = [...new Set(factQueries.flatMap((fact) => fact.queries))]
-    .sort(
-      (a, b) =>
-        Number(/\s/.test(b)) * 4 +
-          Number(/(?:ide|ate|ite)$/i.test(b)) * 2 +
-          Number(/\d/.test(b)) -
-          (Number(/\s/.test(a)) * 4 +
-            Number(/(?:ide|ate|ite)$/i.test(a)) * 2 +
-            Number(/\d/.test(a))) || a.length - b.length,
-    )
-    .slice(0, 20);
-  const resolvedCandidates = await mapWithConcurrency(queries, 2, async (query) => {
-    const result = await lookupStructure(query);
-    if (result.record) return { query, record: result.record };
-    const alternatives = await Promise.all(
-      (result.candidates ?? [])
-        .slice(0, 5)
-        .map((candidate) => lookupStructure(String(candidate.cid))),
-    );
-    const record = alternatives.find((alternative) =>
-      alternative.record ? usableReactionProduct(alternative.record) : false,
-    )?.record;
-    return { query, record };
-  });
-  const recordByQuery = new Map(
-    resolvedCandidates.flatMap(({ query, record }) =>
-      record?.cid &&
-      usableReactionProduct(record) &&
-      record.cid !== firstRecord.cid &&
-      record.cid !== secondRecord.cid
-        ? [[query, record] as const]
-        : [],
-    ),
+  if (!firstRecord?.inchiKey || !secondRecord?.inchiKey) return [];
+  const reported = await lookupReportedReactions(
+    [firstRecord.inchiKey, secondRecord.inchiKey],
+    [first.formula, second.formula],
   );
-
   const routes: ReactionRecipe[] = [];
   const seenRoutes = new Set<string>();
-  for (const fact of factQueries) {
-    const candidates = fact.queries
-      .map((query) => recordByQuery.get(query))
-      .filter((record, index, records): record is StructureRecord =>
-        Boolean(
-          record?.cid && records.findIndex((candidate) => candidate?.cid === record.cid) === index,
-        ),
+  for (const record of reported) {
+    const resolved = await mapWithConcurrency(record.products, 2, async (product) => {
+      const result = await lookupStructure(
+        product.smiles ? `smiles:${product.smiles}` : (product.query ?? product.formula ?? ""),
       );
-    for (const products of productCombinations(candidates)) {
-      const balance = balanceFormulas(
-        [first.formula, second.formula],
-        products.map((product) => product.formula),
-        [firstRecord.charge ?? 0, secondRecord.charge ?? 0],
-        products.map((product) => product.charge ?? 0),
-      );
-      if (!balance) continue;
-      const condition =
-        relevantReactionCondition(fact.condition, reactantRecords, products) ?? fact.condition;
-      const recipe: ReactionRecipe = {
-        name: products.map((product) => product.name).join(" + "),
-        condition: condition.length > 240 ? `${condition.slice(0, 237)}…` : condition,
-        reactants: [
-          { formula: first.formula, coefficient: balance.reactants[0] },
-          { formula: second.formula, coefficient: balance.reactants[1] },
-        ],
-        products: products.map((product, index) => ({
-          formula: product.formula,
-          coefficient: balance.products[index],
-          cid: product.cid!,
-        })),
-      };
-      const routeKey = recipe.products
-        .map((product) => `${product.cid}:${product.coefficient}`)
-        .sort()
-        .join("|");
-      if (seenRoutes.has(routeKey)) continue;
-      seenRoutes.add(routeKey);
-      routes.push(recipe);
-      if (routes.length === 8) return routes;
-    }
+      return result.record;
+    });
+    const products = resolved.filter((product): product is StructureRecord =>
+      Boolean(product?.cid && usableReactionProduct(product)),
+    );
+    if (products.length !== record.products.length) continue;
+    const balance = balanceFormulas(
+      [first.formula, second.formula],
+      products.map((product) => product.formula),
+      [firstRecord.charge ?? 0, secondRecord.charge ?? 0],
+      products.map((product) => product.charge ?? 0),
+    );
+    if (!balance) continue;
+    const recipe: ReactionRecipe = {
+      name: products.map((product) => product.name).join(" + "),
+      condition:
+        record.condition ??
+        (record.source === "rhea"
+          ? `Curated by Rhea (${record.sourceId}).`
+          : `Reported by the Open Reaction Database (${record.sourceId}).`),
+      reactants: [
+        { formula: first.formula, coefficient: balance.reactants[0] },
+        { formula: second.formula, coefficient: balance.reactants[1] },
+      ],
+      products: products.map((product, index) => ({
+        formula: product.formula,
+        coefficient: balance.products[index],
+        cid: product.cid!,
+      })),
+    };
+    const routeKey = recipe.products
+      .map((product) => `${product.cid}:${product.coefficient}`)
+      .sort()
+      .join("|");
+    if (seenRoutes.has(routeKey)) continue;
+    seenRoutes.add(routeKey);
+    routes.push(recipe);
+    if (routes.length === 8) return routes;
   }
   return routes;
 }
@@ -4541,27 +4231,6 @@ function reactionEquation(recipe: ReactionRecipe) {
       .map((item) => `${item.coefficient > 1 ? item.coefficient : ""}${item.formula}`)
       .join(" + ");
   return `${side(recipe.reactants)} → ${side(recipe.products)}`;
-}
-
-function MoleculePh({ cid }: { cid?: number }) {
-  const [values, setValues] = useState<string[]>([]);
-  useEffect(() => {
-    let current = true;
-    setValues([]);
-    if (cid) void lookupCompoundFacts(cid).then((facts) => current && setValues(facts.ph));
-    return () => {
-      current = false;
-    };
-  }, [cid]);
-  if (!cid) return <p>Link this structure to a PubChem record to retrieve reported pH data.</p>;
-  if (!values.length)
-    return (
-      <p>
-        No pH value is reported by PubChem. pH also requires an aqueous concentration and
-        temperature.
-      </p>
-    );
-  return <p>{values.join(" · ")}</p>;
 }
 
 function AtomLearning({

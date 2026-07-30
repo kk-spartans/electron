@@ -29,12 +29,24 @@ button {
   color: inherit;
   font: inherit;
 }
+button:focus,
+[role="button"]:focus {
+  outline: none;
+}
+button:focus-visible,
+[role="button"]:focus-visible,
+input:focus-visible,
+select:focus-visible {
+  outline: 2px solid #89b4fa;
+  outline-offset: 2px;
+}
 .lab-shell {
   width: 100%;
   height: 100dvh;
   display: flex;
   flex-direction: column;
-  overflow: hidden;
+  overflow: visible;
+  clip-path: inset(0);
 }
 .lab-layout {
   --left-width: 228px;
@@ -413,7 +425,8 @@ button {
 .chem-canvas {
   min-width: 0;
   min-height: 0;
-  overflow: hidden;
+  overflow: visible;
+  clip-path: inset(0);
   position: relative;
   touch-action: none;
   cursor: grab;
@@ -555,6 +568,7 @@ button {
   font-size: 12px;
 }
 .reaction-options {
+  flex: 1;
   display: grid;
   gap: 7px;
 }
@@ -597,9 +611,12 @@ button {
   font-weight: 700;
   cursor: pointer;
 }
+.reaction-actions {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
 .reaction-cancel {
-  flex: none;
-  align-self: center;
   min-height: 34px;
   padding: 7px 10px;
   border: 1px solid #45475a;
@@ -607,6 +624,7 @@ button {
   background: transparent;
   color: #bac2de;
   font-size: 10px;
+  font-weight: 500;
   cursor: pointer;
 }
 .reaction-cancel:hover {
@@ -657,29 +675,6 @@ button {
   font-size: 8px;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-.shortcut-tooltip {
-  position: absolute;
-  top: calc(100% + 9px);
-  left: 50%;
-  padding: 5px 8px;
-  transform: translate(-50%, -3px);
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  background: #181825;
-  color: var(--text);
-  box-shadow: 0 6px 18px #0008;
-  opacity: 0;
-  pointer-events: none;
-  font: 10px var(--font-geist-mono);
-  transition:
-    opacity 0.16s ease,
-    transform 0.16s ease;
-}
-.toolbar-action:hover .shortcut-tooltip,
-.toolbar-action:focus-visible .shortcut-tooltip {
-  transform: translate(-50%, 0);
-  opacity: 1;
 }
 .bond-toolbar .structure-lookup:hover:not(:disabled) {
   background: #b4befe;
@@ -816,7 +811,7 @@ button {
   font: inherit;
   text-align: center;
   cursor: pointer;
-  box-shadow: 0 8px 24px #0005;
+  box-shadow: none;
 }
 .compound-label:hover,
 .compound-label:focus-visible {
@@ -825,7 +820,7 @@ button {
   outline: none;
 }
 .compound-label b {
-  color: var(--accent);
+  color: #cdd6f4;
   font: 12px var(--font-geist-mono);
 }
 .compound-label span {
@@ -1469,7 +1464,7 @@ button {
   color: var(--muted);
 }
 .inspector-empty svg {
-  color: var(--accent);
+  color: #7f849c;
   font-size: 30px;
 }
 .inspector-empty b {
@@ -1478,7 +1473,7 @@ button {
 }
 .inspector-empty span {
   max-width: 180px;
-  font-size: 10px;
+  font-size: 14px;
   line-height: 1.5;
 }
 .bond-inspector section {
@@ -1726,6 +1721,22 @@ button {
   padding: 0 12px 12px;
   overflow: auto;
   border-top: 1px solid var(--line);
+  scrollbar-width: thin;
+  scrollbar-color: #585b70 #11111b;
+}
+.structure-candidates::-webkit-scrollbar {
+  width: 8px;
+}
+.structure-candidates::-webkit-scrollbar-track {
+  background: #11111b;
+}
+.structure-candidates::-webkit-scrollbar-thumb {
+  border: 2px solid #11111b;
+  border-radius: 999px;
+  background: #585b70;
+}
+.structure-candidates::-webkit-scrollbar-thumb:hover {
+  background: #7f849c;
 }
 .structure-candidates header {
   position: sticky;
@@ -1829,7 +1840,7 @@ button {
   top: -15px;
   z-index: 2;
   display: grid;
-  grid-template-columns: 1fr auto 34px;
+  grid-template-columns: max-content minmax(0, 1fr) 34px;
   align-items: center;
   gap: 16px;
   margin: -15px -15px 14px;
@@ -1865,28 +1876,52 @@ button {
 }
 .periodic-filters {
   display: flex;
-  gap: 7px;
-}
-.periodic-filters label {
-  display: grid;
-  grid-template-columns: auto auto;
   align-items: center;
-  gap: 6px;
-  color: #cdd6f4;
-  font: 10px var(--font-geist-mono);
+  justify-content: flex-end;
+  gap: 7px;
+  min-width: 0;
+  overflow: hidden;
 }
-.periodic-filters select {
-  height: 34px;
+.periodic-filter-group {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  min-width: 0;
+}
+.periodic-filter-group + .periodic-filter-group {
+  margin-left: 5px;
+}
+.periodic-filter-group > span {
+  margin-right: 3px;
+  color: #a6adc8;
+  font: 11px var(--font-geist-mono);
+}
+.periodic-filter-group button {
+  height: 28px;
+  flex: none;
   border: 1px solid var(--line);
   border-radius: 6px;
   padding: 0 7px;
-  outline: 0;
   background: #181825;
-  color: var(--text);
+  color: #bac2de;
   font: 11px var(--font-geist-mono);
+  cursor: pointer;
+  transition:
+    border-color 0.14s ease,
+    background 0.14s ease,
+    color 0.14s ease;
 }
-.periodic-filters select:focus {
-  border-color: var(--accent);
+.periodic-filter-group button:hover {
+  border-color: #89b4fa;
+  background: #24243a;
+}
+.periodic-filter-group button:focus-visible {
+  border-color: #89b4fa;
+}
+.periodic-filter-group button.selected {
+  border-color: #89b4fa;
+  background: #223149;
+  color: #d8e8ff;
 }
 .periodic-grid {
   min-width: 0;
@@ -1926,6 +1961,10 @@ button {
   opacity: 0.08;
   pointer-events: none;
 }
+.periodic-grid button.matching {
+  border-color: #89b4fa;
+  background: #1d2738;
+}
 .periodic-grid button small {
   color: #cdd6f4;
   font: 8px var(--font-geist-mono);
@@ -1936,11 +1975,12 @@ button {
 }
 .periodic-grid button span {
   grid-column: 1/-1;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow: visible;
   color: #fff;
-  font-size: 9px;
+  font-size: clamp(6.5px, 0.56vw, 8px);
+  line-height: 1.05;
+  letter-spacing: -0.025em;
+  white-space: nowrap;
 }
 .periodic-grid button i {
   grid-column: 1/-1;
@@ -1952,6 +1992,10 @@ button {
 .periodic-grid button.f-block {
   background: #181820;
   border-color: #403c4c;
+}
+.periodic-grid button.f-block.matching {
+  border-color: #89b4fa;
+  background: #1d2738;
 }
 @keyframes menu-backdrop-in {
   from {

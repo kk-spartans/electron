@@ -2698,7 +2698,7 @@ export default function Home() {
                 <div className="reaction-options">
                   {(preparedReaction ? [preparedReaction.recipe] : reactionChoices).map(
                     (recipe) => (
-                      <article key={reactionEquation(recipe)}>
+                      <article key={reactionRouteKey(recipe)}>
                         <span>
                           <b>{reactionEquation(recipe)}</b>
                           <em>{recipe.name}</em>
@@ -4213,10 +4213,7 @@ async function discoverReactionChoices(first: MoleculeEntity, second: MoleculeEn
         cid: product.cid!,
       })),
     };
-    const routeKey = recipe.products
-      .map((product) => `${product.cid}:${product.coefficient}`)
-      .sort()
-      .join("|");
+    const routeKey = reactionRouteKey(recipe);
     if (seenRoutes.has(routeKey)) continue;
     seenRoutes.add(routeKey);
     routes.push(recipe);
@@ -4231,6 +4228,13 @@ function reactionEquation(recipe: ReactionRecipe) {
       .map((item) => `${item.coefficient > 1 ? item.coefficient : ""}${item.formula}`)
       .join(" + ");
   return `${side(recipe.reactants)} → ${side(recipe.products)}`;
+}
+
+function reactionRouteKey(recipe: ReactionRecipe) {
+  return recipe.products
+    .map((product) => `${product.cid}:${product.coefficient}`)
+    .sort()
+    .join("|");
 }
 
 function AtomLearning({

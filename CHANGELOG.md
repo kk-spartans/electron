@@ -1,3 +1,10 @@
+## [1.3.3](https://github.com/kk-spartans/electron/compare/v1.3.2...v1.3.3) (2026-07-31)
+
+
+### Bug Fixes
+
+* key reaction choices by product route ([7177715](https://github.com/kk-spartans/electron/commit/7177715921a6d4712e2ca86ea3baefc8c3a20d9c))
+
 ## [1.3.2](https://github.com/kk-spartans/electron/compare/v1.3.1...v1.3.2) (2026-07-30)
 
 ### Bug Fixes

@@ -7,7 +7,7 @@
 }:
 
 let
-  pkg = builtins.fromJSON (builtins.readFile ../package.json);
+  pkg = builtins.fromJSON (builtins.readFile ../../package.json);
   bunDeps = import ./bun-deps.nix {
     inherit
       lib
@@ -20,7 +20,7 @@ in
 stdenv.mkDerivation {
   inherit (pkg) name version;
   src = lib.cleanSourceWith {
-    src = ../.;
+    src = ../../.;
     filter =
       name: type:
       let
@@ -51,7 +51,7 @@ stdenv.mkDerivation {
     cp -r --no-preserve=mode ${bunDeps}/node_modules node_modules
     mkdir -p public/reactions
     cp -r ${reactions}/* public/reactions/
-    bun run devops/copy-rdkit.ts
+    bun run devops/scripts/copy-rdkit.ts
     bun node_modules/next/dist/bin/next build
     runHook postBuild
   '';
@@ -59,7 +59,7 @@ stdenv.mkDerivation {
     runHook preInstall
     mkdir -p $out/bin $out/out
     cp -r out/* $out/out/
-    bun build --compile --outfile dist/electron-server devops/server.ts
+    bun build --compile --outfile dist/electron-server devops/scripts/server.ts
     cp dist/electron-server $out/bin/electron-server
     runHook postInstall
   '';

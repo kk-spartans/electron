@@ -6,7 +6,7 @@
 }:
 
 let
-  pkg = builtins.fromJSON (builtins.readFile ../package.json);
+  pkg = builtins.fromJSON (builtins.readFile ../../package.json);
   bunDeps = import ./bun-deps.nix {
     inherit
       lib
@@ -19,7 +19,7 @@ in
 stdenv.mkDerivation {
   name = "${pkg.name}-reactions-${pkg.version}";
   src = lib.cleanSourceWith {
-    src = ../.;
+    src = ../../.;
     filter =
       name: type:
       let
@@ -49,7 +49,7 @@ stdenv.mkDerivation {
     export HOME=$TMPDIR
     export SSL_CERT_FILE=${cacert}/etc/ssl/certs/ca-bundle.crt
     cp -r --no-preserve=mode ${bunDeps}/node_modules node_modules
-    bun run devops/build-reaction-index.ts
+    bun run devops/scripts/build-reaction-index.ts
   '';
   installPhase = ''
     mkdir -p $out

@@ -13,7 +13,7 @@ type WorkerTask = {
   sourceId?: string;
 };
 
-const root = new URL("../", import.meta.url).pathname;
+const root = new URL("../../", import.meta.url).pathname;
 const initRDKitModule =
   (RDKitPackage as unknown as { default?: RDKitLoader }).default ??
   (RDKitPackage as unknown as RDKitLoader);

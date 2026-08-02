@@ -6,7 +6,7 @@
 }:
 
 let
-  pkg = builtins.fromJSON (builtins.readFile ../package.json);
+  pkg = builtins.fromJSON (builtins.readFile ../../package.json);
   image = dockerTools.buildLayeredImage {
     name = "ghcr.io/kk-spartans/electron/electron-app";
     tag = "latest";

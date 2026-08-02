@@ -1,4 +1,4 @@
 let
-  flake = builtins.getFlake (toString ../.);
+  flake = builtins.getFlake (toString ../../.);
 in
 flake.legacyPackages.${builtins.currentSystem}

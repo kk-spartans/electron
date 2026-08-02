@@ -4,15 +4,19 @@ import { existsSync } from "node:fs";
 import { mkdir, open, readFile, rename, rm, writeFile, type FileHandle } from "node:fs/promises";
 import { gzipSync } from "node:zlib";
 
-const root = new URL("../", import.meta.url).pathname;
+const root = new URL("../../", import.meta.url).pathname;
 const cache = `${root}.cache/ord`;
 const source = `${cache}/source`;
 const databasePath = `${cache}/index.sqlite3`;
 const output = `${root}public/reactions`;
-const snapshot = (await readFile(`${root}devops/ord-snapshot.txt`, "utf8")).trim();
-const canteraSnapshot = (await readFile(`${root}devops/cantera-snapshot.txt`, "utf8")).trim();
-const phreeqcSnapshot = (await readFile(`${root}devops/phreeqc-snapshot.txt`, "utf8")).trim();
-const rheaSnapshot = (await readFile(`${root}devops/rhea-snapshot.txt`, "utf8")).trim();
+const snapshot = (await readFile(`${root}devops/snapshots/ord-snapshot.txt`, "utf8")).trim();
+const canteraSnapshot = (
+  await readFile(`${root}devops/snapshots/cantera-snapshot.txt`, "utf8")
+).trim();
+const phreeqcSnapshot = (
+  await readFile(`${root}devops/snapshots/phreeqc-snapshot.txt`, "utf8")
+).trim();
+const rheaSnapshot = (await readFile(`${root}devops/snapshots/rhea-snapshot.txt`, "utf8")).trim();
 const sourceRevision = [snapshot, rheaSnapshot, canteraSnapshot, phreeqcSnapshot].join(":");
 const schemaVersion = 1;
 const indexVersion = 5;

@@ -5,7 +5,7 @@
   ...
 }:
 let
-  flake = builtins.getFlake (toString ../.);
+  flake = builtins.getFlake (toString ../../.);
   dockerImage = flake.packages.${pkgs.stdenv.hostPlatform.system}.docker;
 in
 {

@@ -32,7 +32,7 @@ jobs:
           path: |
             .cache/ord
             public/reactions
-          key: reactions-${{ runner.os }}-${{ hashFiles('devops/*-snapshot.txt', 'devops/build-reaction-index.ts', 'devops/ord-index-worker.ts') }}
+          key: reactions-${{ runner.os }}-${{ hashFiles('devops/snapshots/*.txt', 'devops/scripts/build-reaction-index.ts', 'devops/scripts/ord-index-worker.ts') }}
 
       - name: Run checks
         run: |
@@ -74,7 +74,7 @@ jobs:
         uses: actions/cache@v5
         with:
           path: nix-store.nar.gz
-          key: nix-store-${{ runner.os }}-${{ hashFiles('devops/*-snapshot.txt', 'devops/build-reaction-index.ts', 'devops/ord-index-worker.ts', 'devops/bun-deps.nix', 'devops/reactions.nix', 'devops/package.nix', 'devops/docker.nix', 'devops/arion-compose.nix', 'devops/arion-pkgs.nix', 'flake.lock', 'bun.lockb') }}
+          key: nix-store-${{ runner.os }}-${{ hashFiles('devops/snapshots/*.txt', 'devops/scripts/build-reaction-index.ts', 'devops/scripts/ord-index-worker.ts', 'devops/nix/bun-deps.nix', 'devops/nix/reactions.nix', 'devops/nix/package.nix', 'devops/nix/docker.nix', 'devops/nix/arion-compose.nix', 'devops/nix/arion-pkgs.nix', 'flake.lock', 'bun.lockb') }}
           restore-keys: |
             nix-store-${{ runner.os }}-
           save-always: true
@@ -82,7 +82,7 @@ jobs:
       - name: Import Nix store cache
         run: |
           if [ -f nix-store.nar.gz ]; then
-            bash devops/nix-store-cache.sh import nix-store.nar.gz
+            bash devops/nix/nix-store-cache.sh import nix-store.nar.gz
           fi
 
       - name: Build Docker image with Nix
@@ -106,4 +106,4 @@ jobs:
           docker push "$IMAGE:${{ steps.sha.outputs.short }}"
 
       - name: Export and save Nix store cache
-        run: bash devops/nix-store-cache.sh export nix-store.nar.gz .#docker
+        run: bash devops/nix/nix-store-cache.sh export nix-store.nar.gz .#docker

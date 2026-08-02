@@ -6,11 +6,11 @@
 }:
 
 let
-  pkg = builtins.fromJSON (builtins.readFile ../package.json);
+  pkg = builtins.fromJSON (builtins.readFile ../../package.json);
 in
 stdenv.mkDerivation {
   name = "${pkg.name}-bun-deps-${pkg.version}";
-  src = lib.sourceByRegex ../. [
+  src = lib.sourceByRegex ../../. [
     "^package\\.json$"
     "^bun\\.lock$"
   ];

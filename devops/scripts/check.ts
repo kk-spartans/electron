@@ -77,7 +77,7 @@ const steps: Step[] = [
   {
     name: "react-doctor",
     command: "react-doctor",
-    args: ["devops", "--verbose"],
+    args: ["devops/scripts", "--verbose"],
   },
   {
     name: "typecheck",

@@ -3,8 +3,8 @@
   "version": "1.4.0",
   "private": false,
   "scripts": {
-    "prepare:data": "bun run devops/build-reaction-index.ts",
-    "prepare:app": "bun run prepare:data && bun run devops/copy-rdkit.ts",
+    "prepare:data": "bun run devops/scripts/build-reaction-index.ts",
+    "prepare:app": "bun run prepare:data && bun run devops/scripts/copy-rdkit.ts",
     "dev": "bun run prepare:app && next dev",
     "build": "bun run prepare:app && next build",
     "release": "semantic-release --extends ./devops/semantic-release.json"

@@ -2,11 +2,11 @@
   "$schema": "https://knip.dev/schema.json",
   "entry": [
     "src/app/**/*.{ts,tsx}",
-    "devops/check.ts",
-    "devops/ord-index-worker.ts",
-    "devops/server.ts"
+    "devops/scripts/check.ts",
+    "devops/scripts/ord-index-worker.ts",
+    "devops/scripts/server.ts"
   ],
-  "project": ["src/**/*.{ts,tsx,css}", "devops/*.ts"],
+  "project": ["src/**/*.{ts,tsx,css}", "devops/scripts/*.ts"],
   "ignoreDependencies": [
     "@e18e/cli",
     "@semantic-release/changelog",

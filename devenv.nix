@@ -54,11 +54,11 @@ in
   };
 
   tasks = {
-    "electron:check".exec = "bun run devops/check.ts";
+    "electron:check".exec = "bun run devops/scripts/check.ts";
     "electron:dev".exec = "bun run dev";
     "electron:release".exec = "bun run release";
     "electron:compose".exec =
-      "arion -f devops/arion-compose.nix -p devops/arion-pkgs.nix cat | jq '{ services: (.services | walk(if type == \"object\" then with_entries(select(.value != {} and .value != [])) else . end)) }' > devops/docker-compose.yml";
-    "electron:up".exec = "arion -f devops/arion-compose.nix -p devops/arion-pkgs.nix up";
+      "arion -f devops/nix/arion-compose.nix -p devops/nix/arion-pkgs.nix cat | jq '{ services: (.services | walk(if type == \"object\" then with_entries(select(.value != {} and .value != [])) else . end)) }' > devops/nix/docker-compose.yml";
+    "electron:up".exec = "arion -f devops/nix/arion-compose.nix -p devops/nix/arion-pkgs.nix up";
   };
 }

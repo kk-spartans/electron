@@ -1,3 +1,10 @@
+# [1.4.0](https://github.com/kk-spartans/electron/compare/v1.3.3...v1.4.0) (2026-08-02)
+
+
+### Features
+
+* migrate docker build to nix with store caching ([409d6b7](https://github.com/kk-spartans/electron/commit/409d6b7a9ffe35d674972ccd9aa8d2d14839accb))
+
 ## [1.3.3](https://github.com/kk-spartans/electron/compare/v1.3.2...v1.3.3) (2026-07-31)
 
 ### Bug Fixes

@@ -33,6 +33,8 @@ jobs:
             .cache/ord
             public/reactions
           key: reactions-${{ runner.os }}-${{ hashFiles('devops/snapshots/*.txt', 'devops/scripts/build-reaction-index.ts', 'devops/scripts/ord-index-worker.ts') }}
+          restore-keys: |
+            reactions-${{ runner.os }}-
 
       - name: Run checks
         run: |

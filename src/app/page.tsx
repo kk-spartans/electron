@@ -103,6 +103,9 @@ const opfsCanvasFileName = "electron-autosave.electron";
 const canvasNavigationHintKey = "electron:canvas-navigation-hint-seen";
 const reactionChoiceCache = new Map<string, Promise<ReactionRecipe[]>>();
 const structureRecognitionCache = new Map<string, Promise<StructureRecord | undefined>>();
+const aiReactionCache = new Map<string, Promise<ReactionRecipe[]>>();
+let aiReactionApiAvailable: boolean | null = null;
+const aiReactionEndpoint = process.env.NEXT_PUBLIC_REACTION_API ?? "/api/reactions";
 
 function sameHistorySnapshot(first: HistorySnapshot, second: HistorySnapshot) {
   return JSON.stringify(first) === JSON.stringify(second);
@@ -1060,9 +1063,15 @@ export default function Home() {
         const routes = await pending;
         if (!routes.length) reactionChoiceCache.delete(key);
         if (!current) return;
-        if (routes.length) {
+        const knownProducts = [
+          ...new Set(routes.flatMap((route) => route.products.map((product) => product.formula))),
+        ];
+        const aiRoutes = await discoverAIAssistedReactions(pair.first, pair.second, knownProducts);
+        if (!current) return;
+        const merged = mergeReactionRoutes([...aiRoutes, ...routes]);
+        if (merged.length) {
           reactionPairRef.current = pair;
-          setReactionChoices(routes);
+          setReactionChoices(merged);
           setReactionSearching(false);
           return;
         }
@@ -4220,6 +4229,112 @@ async function discoverReactionChoices(first: MoleculeEntity, second: MoleculeEn
     if (routes.length === 8) return routes;
   }
   return routes;
+}
+
+async function queryAIReactions(
+  first: MoleculeEntity,
+  second: MoleculeEntity,
+  knownProducts: string[],
+): Promise<ReactionRecipe[]> {
+  if (aiReactionApiAvailable === false) return [];
+  try {
+    const response = await fetch(aiReactionEndpoint, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        reactants: [
+          { formula: first.formula, name: first.name },
+          { formula: second.formula, name: second.name },
+        ],
+        products: [...new Set(knownProducts)].map((formula) => ({ formula })),
+      }),
+      signal: AbortSignal.timeout(120_000),
+    });
+    if (response.status >= 400) {
+      aiReactionApiAvailable = false;
+      return [];
+    }
+    if (!response.ok) return [];
+    const payload = (await response.json()) as {
+      source?: string;
+      model?: string;
+      reactions?: Array<{
+        name?: string;
+        condition?: string;
+        reactants: Array<{ formula: string; coefficient?: number }>;
+        products: Array<{ formula: string; coefficient?: number }>;
+      }>;
+    };
+    const routes: ReactionRecipe[] = [];
+    for (const candidate of payload.reactions ?? []) {
+      if (!Array.isArray(candidate.reactants) || !Array.isArray(candidate.products)) continue;
+      if (!candidate.reactants.length || !candidate.products.length) continue;
+      const reactantFormulas = candidate.reactants.map((reactant) => reactant.formula);
+      const productFormulas = candidate.products.map((product) => product.formula);
+      if (productFormulas.length > 3) continue;
+      const products: ReactionRecipe["products"] = [];
+      let resolvable = true;
+      for (const formula of productFormulas) {
+        const resolved = await lookupStructure(formula);
+        if (!resolved.record?.cid || !usableReactionProduct(resolved.record)) {
+          resolvable = false;
+          break;
+        }
+        products.push({ formula, coefficient: 1, cid: resolved.record.cid });
+      }
+      if (!resolvable) continue;
+      const balance = balanceFormulas(reactantFormulas, productFormulas);
+      if (!balance) continue;
+      routes.push({
+        name: candidate.name ?? productFormulas.join(" + "),
+        condition:
+          candidate.condition ?? `AI prediction${payload.model ? ` (${payload.model})` : ""}`,
+        reactants: balance.reactants.map((coefficient, index) => ({
+          formula: reactantFormulas[index],
+          coefficient,
+        })),
+        products: products.map((product, index) => ({
+          ...product,
+          coefficient: balance.products[index],
+        })),
+      });
+    }
+    return routes;
+  } catch {
+    return [];
+  }
+}
+
+async function discoverAIAssistedReactions(
+  first: MoleculeEntity,
+  second: MoleculeEntity,
+  knownProducts: string[],
+) {
+  const key = [first.cid ?? first.formula, second.cid ?? second.formula]
+    .map(String)
+    .sort()
+    .join("|");
+  let pending = aiReactionCache.get(key);
+  if (!pending) {
+    pending = queryAIReactions(first, second, knownProducts);
+    aiReactionCache.set(key, pending);
+  }
+  const routes = await pending;
+  if (!routes.length) aiReactionCache.delete(key);
+  return routes;
+}
+
+function mergeReactionRoutes(routes: ReactionRecipe[]) {
+  const seen = new Set<string>();
+  const merged: ReactionRecipe[] = [];
+  for (const route of routes) {
+    const routeKey = reactionRouteKey(route);
+    if (seen.has(routeKey)) continue;
+    seen.add(routeKey);
+    merged.push(route);
+    if (merged.length === 8) break;
+  }
+  return merged;
 }
 
 function reactionEquation(recipe: ReactionRecipe) {

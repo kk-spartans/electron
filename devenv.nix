@@ -3,20 +3,23 @@
 let
   originalBun = pkgs.bun;
   pkgs' = pkgs.extend inputs.nix-packages.overlays.bun-baseline;
-  bun' = pkgs.runCommand "bun-${originalBun.version}" {
-    version = originalBun.version;
-  } ''
-    mkdir -p $out/bin
-    cat > $out/bin/bun << 'WRAPPER'
-    #!/bin/sh
-    if grep -qw avx2 /proc/cpuinfo 2>/dev/null; then
-      exec ${originalBun}/bin/bun "$@"
-    else
-      exec ${pkgs'.bun}/bin/bun "$@"
-    fi
-    WRAPPER
-    chmod +x $out/bin/bun
-  '';
+  bun' =
+    pkgs.runCommand "bun-${originalBun.version}"
+      {
+        version = originalBun.version;
+      }
+      ''
+        mkdir -p $out/bin
+        cat > $out/bin/bun << 'WRAPPER'
+        #!/bin/sh
+        if grep -qw avx2 /proc/cpuinfo 2>/dev/null; then
+          exec ${originalBun}/bin/bun "$@"
+        else
+          exec ${pkgs'.bun}/bin/bun "$@"
+        fi
+        WRAPPER
+        chmod +x $out/bin/bun
+      '';
 in
 
 {
@@ -25,6 +28,9 @@ in
     gitleaks
     nixfmt
     docker
+    arion
+    docker-compose
+    jq
   ];
 
   languages = {
@@ -51,5 +57,8 @@ in
     "electron:check".exec = "bun run devops/check.ts";
     "electron:dev".exec = "bun run dev";
     "electron:release".exec = "bun run release";
+    "electron:compose".exec =
+      "arion -f devops/arion-compose.nix -p devops/arion-pkgs.nix cat | jq '{ services: (.services | walk(if type == \"object\" then with_entries(select(.value != {} and .value != [])) else . end)) }' > devops/docker-compose.yml";
+    "electron:up".exec = "arion -f devops/arion-compose.nix -p devops/arion-pkgs.nix up";
   };
 }

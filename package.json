@@ -1,6 +1,6 @@
 {
   "name": "electron",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "private": false,
   "scripts": {
     "prepare:data": "bun run devops/scripts/build-reaction-index.ts",

@@ -1,3 +1,10 @@
+# [1.5.0](https://github.com/kk-spartans/electron/compare/v1.4.0...v1.5.0) (2026-08-03)
+
+
+### Features
+
+* **api:** structured output with json_schema, disable reasoning for speed ([36b704e](https://github.com/kk-spartans/electron/commit/36b704ecbf9d763d7a56d3db8bb6b0c1c7fb0af9))
+
 # [1.4.0](https://github.com/kk-spartans/electron/compare/v1.3.3...v1.4.0) (2026-08-02)
 
 

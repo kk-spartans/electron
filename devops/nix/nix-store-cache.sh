@@ -26,7 +26,7 @@ case "$cmd" in
     ;;
   import)
     archive="${2:?missing archive}"
-    gunzip -c "$archive" | sudo nix-store --import
+    gunzip -c "$archive" | sudo env "PATH=$PATH" nix-store --import
     ;;
   *)
     usage

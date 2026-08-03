@@ -62,6 +62,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
 
       - uses: cachix/install-nix-action@v31
       - uses: cachix/cachix-action@v16
@@ -106,6 +108,11 @@ jobs:
           docker tag "$IMAGE:latest" "$IMAGE:${{ steps.sha.outputs.short }}"
           docker push "$IMAGE:latest"
           docker push "$IMAGE:${{ steps.sha.outputs.short }}"
+          VERSION=$(git tag --points-at HEAD | sed -n 's/^v//p' | head -1)
+          if [ -n "$VERSION" ]; then
+            docker tag "$IMAGE:latest" "$IMAGE:$VERSION"
+            docker push "$IMAGE:$VERSION"
+          fi
 
       - name: Export and save Nix store cache
         run: bash devops/nix/nix-store-cache.sh export nix-store.nar.gz .#docker

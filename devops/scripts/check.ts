@@ -61,7 +61,7 @@ const steps: Step[] = [
   {
     name: "oxfmt",
     command: "oxfmt",
-    args: ["--check", ".", "--config", "devops/oxfmtrc.json"],
+    args: ["--check", ".", "!CHANGELOG.md", "--config", "devops/oxfmtrc.json"],
   },
   {
     name: "knip",

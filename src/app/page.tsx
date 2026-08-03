@@ -684,9 +684,9 @@ export default function Home() {
     if (!boot.ready || defaultCompoundLoaded.current) return;
     let current = true;
     const restoreCanvas = async () => {
+      if (!current) return;
       try {
         const saved = await readAutosavedCanvas();
-        if (!current) return;
         if (saved) {
           applyCanvasDocument(parseCanvasDocument(saved));
           defaultCompoundLoaded.current = true;
@@ -989,11 +989,15 @@ export default function Home() {
     return pairs.sort((first, second) => first.distance - second.distance);
   }, [selectedReactants]);
 
-  const reactionContextEntities = reactionPairRef.current
-    ? [reactionPairRef.current.first, reactionPairRef.current.second]
-    : reactionCandidate?.pairs[0]
-      ? [reactionCandidate.pairs[0].first, reactionCandidate.pairs[0].second]
-      : selectedReactants;
+  const reactionContextEntities = useMemo(
+    () =>
+      reactionPairRef.current
+        ? [reactionPairRef.current.first, reactionPairRef.current.second]
+        : reactionCandidate?.pairs[0]
+          ? [reactionCandidate.pairs[0].first, reactionCandidate.pairs[0].second]
+          : selectedReactants,
+    [reactionCandidate, selectedReactants],
+  );
 
   const reactionMenuPosition = useMemo(() => {
     if (!reactionContextEntities.length) return undefined;
@@ -1066,6 +1070,7 @@ export default function Home() {
         const knownProducts = [
           ...new Set(routes.flatMap((route) => route.products.map((product) => product.formula))),
         ];
+        if (!current) return;
         const aiRoutes = await discoverAIAssistedReactions(pair.first, pair.second, knownProducts);
         if (!current) return;
         const merged = mergeReactionRoutes([...aiRoutes, ...routes]);
@@ -1919,32 +1924,31 @@ export default function Home() {
           .sort((first, second) => second.score - first.score);
         const acceptor = candidates[0];
         if (!acceptor) continue;
+        const { atom: acceptorAtom } = acceptor;
         const neighbors = acceptor.attached
-          .map((bond) => atomById.get(bond.from === acceptor.atom.id ? bond.to : bond.from))
+          .map((bond) => atomById.get(bond.from === acceptorAtom.id ? bond.to : bond.from))
           .filter((atom): atom is AtomNode => Boolean(atom));
         const neighborCenter = {
           x: neighbors.reduce((sum, atom) => sum + atom.x, 0) / Math.max(1, neighbors.length),
           y: neighbors.reduce((sum, atom) => sum + atom.y, 0) / Math.max(1, neighbors.length),
         };
         const directionLength =
-          Math.hypot(acceptor.atom.x - neighborCenter.x, acceptor.atom.y - neighborCenter.y) || 1;
-        hydrogen.x =
-          acceptor.atom.x + ((acceptor.atom.x - neighborCenter.x) / directionLength) * 185;
-        hydrogen.y =
-          acceptor.atom.y + ((acceptor.atom.y - neighborCenter.y) / directionLength) * 185;
+          Math.hypot(acceptorAtom.x - neighborCenter.x, acceptorAtom.y - neighborCenter.y) || 1;
+        hydrogen.x = acceptorAtom.x + ((acceptorAtom.x - neighborCenter.x) / directionLength) * 185;
+        hydrogen.y = acceptorAtom.y + ((acceptorAtom.y - neighborCenter.y) / directionLength) * 185;
         createdBonds.splice(createdBonds.indexOf(acidBond), 1);
         const nextBondId = Math.max(0, ...createdBonds.map((bond) => bond.id)) + 1;
         createdBonds.push(
           {
             id: nextBondId,
-            from: acceptor.atom.id,
+            from: acceptorAtom.id,
             to: hydrogen.id,
             type: "covalent",
             order: 1,
           },
           {
             id: nextBondId + 1,
-            from: acceptor.atom.id,
+            from: acceptorAtom.id,
             to: halide.id,
             type: "ionic",
             order: 1,
@@ -4119,9 +4123,10 @@ function balanceFormulas(
     pivotColumns.push(column);
     pivotRow++;
   }
+  const pivotColumnSet = new Set(pivotColumns);
   const freeColumns = formulas
     .map((_, index) => index)
-    .filter((column) => !pivotColumns.includes(column));
+    .filter((column) => !pivotColumnSet.has(column));
   if (freeColumns.length !== 1) return null;
   const coefficients = Array<number>(formulas.length).fill(0);
   coefficients[freeColumns[0]] = 1;

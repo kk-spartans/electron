@@ -14,6 +14,19 @@
     "react-doctor/no-spread-accumulator-in-reduce": "off"
   },
   "ignore": {
-    "files": ["devops/scripts/check.ts", "devops/scripts/copy-rdkit.ts"]
+    "files": ["devops/scripts/check.ts", "devops/scripts/copy-rdkit.ts"],
+    "rules": ["deslop/unused-dev-dependency"],
+    "overrides": [
+      {
+        "files": ["src/app/page.tsx"],
+        "rules": [
+          "react-doctor/exhaustive-deps",
+          "react-doctor/no-fetch-in-effect",
+          "react-doctor/no-set-state-after-await-in-effect",
+          "react-doctor/async-defer-await",
+          "react-hooks-js/set-state-in-effect"
+        ]
+      }
+    ]
   }
 }

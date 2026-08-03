@@ -4253,7 +4253,7 @@ async function queryAIReactions(
         ],
         products: [...new Set(knownProducts)].map((formula) => ({ formula })),
       }),
-      signal: AbortSignal.timeout(120_000),
+      signal: AbortSignal.timeout(320_000),
     });
     if (response.status >= 400) {
       aiReactionApiAvailable = false;

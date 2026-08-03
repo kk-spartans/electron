@@ -186,8 +186,49 @@ Enumerate every chemically plausible reaction:
 - The "different ways to balance" requirement means: include every distinct product set that can be formed from the reactants, and every independent reaction that shares those species.
 - Every equation must conserve element counts exactly.
 - Formulas use standard chemical notation with element symbols and subscripts (e.g. H2O, CsI, CO2).
+- Diatomic elements appear as H2, N2, O2, F2, Cl2, Br2, I2.
 Return ONLY strict JSON matching this schema, with no commentary:
 {"reactions":[{"name":"short human name","condition":"brief conditions if known","reactants":[{"formula":"A","coefficient":1}],"products":[{"formula":"B","coefficient":1}]}]}`;
+
+const reactionSchema = {
+  type: "object",
+  required: ["reactions"],
+  properties: {
+    reactions: {
+      type: "array",
+      items: {
+        type: "object",
+        required: ["reactants", "products"],
+        properties: {
+          name: { type: "string" },
+          condition: { type: "string" },
+          reactants: {
+            type: "array",
+            items: {
+              type: "object",
+              required: ["formula"],
+              properties: {
+                formula: { type: "string" },
+                coefficient: { type: "integer" },
+              },
+            },
+          },
+          products: {
+            type: "array",
+            items: {
+              type: "object",
+              required: ["formula"],
+              properties: {
+                formula: { type: "string" },
+                coefficient: { type: "integer" },
+              },
+            },
+          },
+        },
+      },
+    },
+  },
+};
 
 function buildPrompt(input: ReactionInput) {
   const species = [
@@ -201,7 +242,11 @@ function buildPrompt(input: ReactionInput) {
   return {
     model: openaiModel,
     temperature: 0.2,
-    response_format: { type: "json_object" },
+    reasoning_effort: "none",
+    response_format: {
+      type: "json_schema",
+      json_schema: { name: "reactions", strict: true, schema: reactionSchema },
+    },
     messages: [
       { role: "system", content: systemPrompt },
       { role: "user", content: `Species:\n${species.join("\n")}` },
@@ -211,7 +256,7 @@ function buildPrompt(input: ReactionInput) {
 
 async function chatCompletions(body: unknown, allowUnstructured = true) {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 90_000);
+  const timeout = setTimeout(() => controller.abort(), 300_000);
   try {
     const response = await fetch(`${openaiBaseUrl}/chat/completions`, {
       method: "POST",
@@ -248,6 +293,19 @@ async function chatCompletions(body: unknown, allowUnstructured = true) {
   }
 }
 
+function extractJson(content: string): unknown {
+  const start = content.indexOf("{");
+  const end = content.lastIndexOf("}");
+  if (start !== -1 && end > start) {
+    try {
+      return JSON.parse(content.slice(start, end + 1));
+    } catch {
+      // Fall through to a direct parse of the trimmed content.
+    }
+  }
+  return JSON.parse(content.trim());
+}
+
 async function handleReactions(request: Request) {
   if (!openaiApiKey) {
     return jsonResponse({ error: "OPENAI_API_KEY is not configured." }, 503);
@@ -281,7 +339,7 @@ async function handleReactions(request: Request) {
     if (!content) throw new Error("The model returned an empty response.");
     let parsed: { reactions?: unknown };
     try {
-      parsed = JSON.parse(content);
+      parsed = extractJson(content) as { reactions?: unknown };
     } catch {
       throw new Error("The model returned invalid JSON.");
     }

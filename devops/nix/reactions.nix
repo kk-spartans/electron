@@ -6,7 +6,6 @@
 }:
 
 let
-  pkg = builtins.fromJSON (builtins.readFile ../../package.json);
   bunDeps = import ./bun-deps.nix {
     inherit
       lib
@@ -17,27 +16,17 @@ let
   };
 in
 stdenv.mkDerivation {
-  name = "${pkg.name}-reactions-${pkg.version}";
-  src = lib.cleanSourceWith {
-    src = ../../.;
-    filter =
-      name: type:
-      let
-        baseName = baseNameOf (toString name);
-      in
-      !(
-        type == "directory"
-        && (
-          baseName == "node_modules"
-          || baseName == ".cache"
-          || baseName == ".devenv"
-          || baseName == ".git"
-          || baseName == ".next"
-          || baseName == "out"
-          || baseName == "public"
-        )
-      );
-  };
+  # Keep this output stable across app releases. The fixed-output hash already
+  # captures the generated index, and the source only contains its true inputs.
+  name = "electron-reactions";
+  src = lib.sourceByRegex ../../. [
+    "^devops$"
+    "^devops/scripts$"
+    "^devops/scripts/build-reaction-index\\.ts$"
+    "^devops/scripts/ord-index-worker\\.ts$"
+    "^devops/snapshots$"
+    "^devops/snapshots/.*$"
+  ];
   dontStrip = true;
   dontPatchELF = true;
   nativeBuildInputs = [ bun ];
@@ -49,14 +38,14 @@ stdenv.mkDerivation {
     export HOME=$TMPDIR
     export SSL_CERT_FILE=${cacert}/etc/ssl/certs/ca-bundle.crt
     cp -r --no-preserve=mode ${bunDeps}/node_modules node_modules
-    bun run devops/scripts/build-reaction-index.ts
+    bun devops/scripts/build-reaction-index.ts
   '';
   installPhase = ''
     mkdir -p $out
     cp -r public/reactions/* $out/
   '';
   meta = {
-    description = "Static reaction index for ${pkg.name}";
+    description = "Static reaction index for electron";
     license = lib.licenses.unlicense;
   };
 }

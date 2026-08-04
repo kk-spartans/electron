@@ -7,13 +7,23 @@
 
 let
   pkg = builtins.fromJSON (builtins.readFile ../../package.json);
+  normalizedPackage = builtins.toFile "electron-package.json" (
+    builtins.toJSON (pkg // { version = "0.0.0"; })
+  );
+  dependencySource = stdenv.mkDerivation {
+    name = "electron-bun-deps-source";
+    dontUnpack = true;
+    dontBuild = true;
+    installPhase = ''
+      mkdir -p $out
+      cp ${normalizedPackage} $out/package.json
+      cp ${../../bun.lock} $out/bun.lock
+    '';
+  };
 in
 stdenv.mkDerivation {
-  name = "${pkg.name}-bun-deps-${pkg.version}";
-  src = lib.sourceByRegex ../../. [
-    "^package\\.json$"
-    "^bun\\.lock$"
-  ];
+  name = "electron-bun-deps";
+  src = dependencySource;
   nativeBuildInputs = [ bun ];
   buildInputs = [ cacert ];
   dontFixup = true;

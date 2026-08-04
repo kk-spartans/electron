@@ -1,3 +1,10 @@
+## [1.6.6](https://github.com/kk-spartans/electron/compare/v1.6.5...v1.6.6) (2026-08-04)
+
+
+### Bug Fixes
+
+* normalize model structure selection keys ([aa16cf6](https://github.com/kk-spartans/electron/commit/aa16cf682704c8144eadeacb2f86adba63e1cdea))
+
 ## [1.6.5](https://github.com/kk-spartans/electron/compare/v1.6.4...v1.6.5) (2026-08-04)
 
 

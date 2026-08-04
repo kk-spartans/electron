@@ -1,3 +1,10 @@
+## [1.6.3](https://github.com/kk-spartans/electron/compare/v1.6.2...v1.6.3) (2026-08-04)
+
+
+### Bug Fixes
+
+* resolve AI reaction formula products ([2f14681](https://github.com/kk-spartans/electron/commit/2f14681dddb237aff1848779cf6de56f97d49b91))
+
 ## [1.6.2](https://github.com/kk-spartans/electron/compare/v1.6.1...v1.6.2) (2026-08-04)
 
 

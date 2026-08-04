@@ -1,3 +1,10 @@
+## [1.6.1](https://github.com/kk-spartans/electron/compare/v1.6.0...v1.6.1) (2026-08-04)
+
+
+### Bug Fixes
+
+* preserve compiled server payload ([d4057e4](https://github.com/kk-spartans/electron/commit/d4057e4bbe3657c3ae91396b300e4f4d9b95f6f9))
+
 # [1.6.0](https://github.com/kk-spartans/electron/compare/v1.5.0...v1.6.0) (2026-08-04)
 
 

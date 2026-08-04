@@ -14,7 +14,12 @@ import {
 import AtomScene, { Subshell, subshellColors } from "@/components/AtomScene";
 import periodicTable from "@exabyte-io/periodic-table.js/periodic-table.json";
 import { loadRDKit, validateStructure } from "@/lib/rdkit";
-import { lookupStructure, type StructureCandidate, type StructureRecord } from "@/lib/pubchem";
+import {
+  lookupStructure,
+  type StructureCandidate,
+  type StructureRecord,
+  type StructureResult,
+} from "@/lib/pubchem";
 import { lookupReportedReactions } from "@/lib/reactions";
 
 type ElementKey = string;
@@ -106,6 +111,8 @@ const structureRecognitionCache = new Map<string, Promise<StructureRecord | unde
 const aiReactionCache = new Map<string, Promise<ReactionRecipe[]>>();
 let aiReactionApiAvailable: boolean | null = null;
 const aiReactionEndpoint = process.env.NEXT_PUBLIC_REACTION_API ?? "/api/reactions";
+const aiStructureEndpoint =
+  process.env.NEXT_PUBLIC_REACTION_API_RESOLVE ?? "/api/resolve-structure";
 
 function sameHistorySnapshot(first: HistorySnapshot, second: HistorySnapshot) {
   return JSON.stringify(first) === JSON.stringify(second);
@@ -4071,13 +4078,32 @@ function usableReactionProduct(record: StructureRecord) {
   );
 }
 
-async function lookupAIReactionProduct(formula: string) {
+async function lookupAIReactionProduct(
+  formula: string,
+  context: {
+    reactants: Array<{ formula: string; name?: string }>;
+    reactionName?: string;
+    condition?: string;
+  },
+): Promise<StructureResult> {
   const result = await lookupStructure(formula);
   if (result.record || !result.candidates?.length) return result;
-  // Formula searches can return isotopes and salts as well as the canonical
-  // compound. AI reactions do not have a UI candidate picker, so use PubChem's
-  // first (canonical) match for this background resolution.
-  return lookupStructure(`cid:${result.candidates[0].cid}`);
+  try {
+    const response = await fetch(aiStructureEndpoint, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ formula, candidates: result.candidates, ...context }),
+      signal: AbortSignal.timeout(320_000),
+    });
+    if (!response.ok) return result;
+    const selection = (await response.json()) as { cid?: unknown };
+    const candidate = result.candidates.find(
+      (item) => item.cid === selection.cid && Number.isInteger(selection.cid),
+    );
+    return candidate ? lookupStructure(`cid:${candidate.cid}`) : result;
+  } catch {
+    return result;
+  }
 }
 
 function greatestCommonDivisor(first: number, second: number): number {
@@ -4289,7 +4315,14 @@ async function queryAIReactions(
       const products: ReactionRecipe["products"] = [];
       let resolvable = true;
       for (const formula of productFormulas) {
-        const resolved = await lookupAIReactionProduct(formula);
+        const resolved = await lookupAIReactionProduct(formula, {
+          reactants: [
+            { formula: first.formula, name: first.name },
+            { formula: second.formula, name: second.name },
+          ],
+          ...(candidate.name ? { reactionName: candidate.name } : {}),
+          ...(candidate.condition ? { condition: candidate.condition } : {}),
+        });
         if (!resolved.record?.cid || !usableReactionProduct(resolved.record)) {
           resolvable = false;
           break;

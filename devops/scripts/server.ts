@@ -245,6 +245,32 @@ const reactionSchema = {
   },
 };
 
+const structureSelectionSchema = {
+  type: "object",
+  required: ["cid"],
+  additionalProperties: false,
+  properties: {
+    cid: { type: "integer" },
+  },
+};
+
+type StructureCandidate = { cid: number; name: string; formula: string };
+
+const webSearchTool = {
+  type: "function",
+  function: {
+    name: "web_search",
+    description:
+      "Search the web for current or obscure chemistry information when it would improve the answer.",
+    parameters: {
+      type: "object",
+      properties: { query: { type: "string", description: "The search query" } },
+      required: ["query"],
+      additionalProperties: false,
+    },
+  },
+};
+
 function buildPrompt(input: ReactionInput, useStructuredOutput: boolean) {
   const species = [
     ...input.reactants.map(
@@ -258,22 +284,7 @@ function buildPrompt(input: ReactionInput, useStructuredOutput: boolean) {
     model: openaiModel,
     temperature: 0.2,
     reasoning_effort: "none",
-    tools: [
-      {
-        type: "function",
-        function: {
-          name: "web_search",
-          description:
-            "Search the web for current or obscure chemistry information when it would improve the answer.",
-          parameters: {
-            type: "object",
-            properties: { query: { type: "string", description: "The search query" } },
-            required: ["query"],
-            additionalProperties: false,
-          },
-        },
-      },
-    ],
+    tools: [webSearchTool],
     messages: [
       {
         role: "system",
@@ -288,6 +299,63 @@ function buildPrompt(input: ReactionInput, useStructuredOutput: boolean) {
         response_format: {
           type: "json_schema",
           json_schema: { name: "reactions", strict: true, schema: reactionSchema },
+        },
+      }
+    : body;
+}
+
+function buildStructureSelectionPrompt(
+  input: {
+    formula: string;
+    candidates: StructureCandidate[];
+    reactants: Species[];
+    reactionName?: string;
+    condition?: string;
+  },
+  useStructuredOutput: boolean,
+) {
+  const candidates = input.candidates
+    .map((candidate) => `CID ${candidate.cid}: ${candidate.name} [${candidate.formula}]`)
+    .join("\n");
+  const reactants = input.reactants
+    .map((reactant) => `${reactant.formula}${reactant.name ? ` (${reactant.name})` : ""}`)
+    .join(" + ");
+  const body = {
+    model: openaiModel,
+    temperature: 0,
+    reasoning_effort: "none",
+    tools: [webSearchTool],
+    messages: [
+      {
+        role: "system",
+        content:
+          "You resolve an ambiguous chemical formula to one PubChem candidate. Choose exactly one CID from the supplied candidate list. Use the candidate name, formula, reaction context, and web_search when useful; do not choose by list position and never invent a CID. Return only JSON with the selected CID.",
+      },
+      {
+        role: "user",
+        content: [
+          `Formula to resolve: ${input.formula}`,
+          `Reactants: ${reactants || "unknown"}`,
+          input.reactionName ? `Proposed reaction: ${input.reactionName}` : "",
+          input.condition ? `Conditions: ${input.condition}` : "",
+          "PubChem candidates:",
+          candidates,
+        ]
+          .filter(Boolean)
+          .join("\n"),
+      },
+    ],
+  };
+  return useStructuredOutput
+    ? {
+        ...body,
+        response_format: {
+          type: "json_schema",
+          json_schema: {
+            name: "structure_selection",
+            strict: true,
+            schema: structureSelectionSchema,
+          },
         },
       }
     : body;
@@ -478,15 +546,11 @@ async function searchWeb(query: string) {
   }
 }
 
-async function completeReaction(input: ReactionInput): Promise<ChatPayload> {
-  await structuredOutputProbe;
-  const useStructuredOutput = structuredOutputSupport === "supported";
-  const initialBody = buildPrompt(input, useStructuredOutput) as {
-    messages: ChatMessage[];
-    [key: string]: unknown;
-  };
+async function completeWithTools(initialBody: {
+  messages: ChatMessage[];
+  [key: string]: unknown;
+}): Promise<ChatPayload> {
   let body = initialBody;
-
   for (let turn = 0; turn < 5; turn++) {
     const payload = await chatCompletions(body);
     const message = payload.choices?.[0]?.message;
@@ -522,6 +586,16 @@ async function completeReaction(input: ReactionInput): Promise<ChatPayload> {
   throw new Error("The model requested too many web searches.");
 }
 
+async function completeReaction(input: ReactionInput): Promise<ChatPayload> {
+  await structuredOutputProbe;
+  const useStructuredOutput = structuredOutputSupport === "supported";
+  const initialBody = buildPrompt(input, useStructuredOutput) as {
+    messages: ChatMessage[];
+    [key: string]: unknown;
+  };
+  return completeWithTools(initialBody);
+}
+
 function extractJson(content: string): unknown {
   const trimmed = content
     .trim()
@@ -543,6 +617,96 @@ function extractJson(content: string): unknown {
     }
   }
   throw new Error("Invalid JSON");
+}
+
+function selectedStructureCandidate(value: unknown, candidates: StructureCandidate[]) {
+  if (!value || typeof value !== "object") return undefined;
+  const cid = (value as { cid?: unknown }).cid;
+  if (typeof cid !== "number" || !Number.isInteger(cid)) return undefined;
+  return candidates.find((candidate) => candidate.cid === cid);
+}
+
+async function resolveStructureCandidate(input: {
+  formula: string;
+  candidates: StructureCandidate[];
+  reactants: Species[];
+  reactionName?: string;
+  condition?: string;
+}) {
+  await structuredOutputProbe;
+  const body = buildStructureSelectionPrompt(input, structuredOutputSupport === "supported") as {
+    messages: ChatMessage[];
+    [key: string]: unknown;
+  };
+  const payload = await completeWithTools(body);
+  const content = payload.choices?.[0]?.message?.content;
+  if (!content) throw new Error("The model returned an empty structure selection.");
+  let parsed: unknown;
+  try {
+    parsed = extractJson(content);
+  } catch {
+    throw new Error("The model returned invalid structure-selection JSON.");
+  }
+  const candidate = selectedStructureCandidate(parsed, input.candidates);
+  if (!candidate) throw new Error("The model selected a CID outside the PubChem candidates.");
+  return { cid: candidate.cid };
+}
+
+async function handleStructureResolution(request: Request) {
+  if (!openaiApiKey) return jsonResponse({ error: "OPENAI_API_KEY is not configured." }, 503);
+  let raw: unknown;
+  try {
+    raw = await request.json();
+  } catch {
+    return jsonResponse({ error: "Request body must be JSON." }, 400);
+  }
+  const value = raw as {
+    formula?: unknown;
+    candidates?: unknown;
+    reactants?: unknown;
+    reactionName?: unknown;
+    condition?: unknown;
+  };
+  const formula = typeof value.formula === "string" ? value.formula.trim() : "";
+  const candidates = Array.isArray(value.candidates)
+    ? value.candidates.flatMap((candidate): StructureCandidate[] => {
+        if (!candidate || typeof candidate !== "object") return [];
+        const item = candidate as Partial<StructureCandidate>;
+        return typeof item.cid === "number" &&
+          Number.isInteger(item.cid) &&
+          typeof item.name === "string" &&
+          typeof item.formula === "string"
+          ? [{ cid: item.cid, name: item.name.slice(0, 300), formula: item.formula.slice(0, 120) }]
+          : [];
+      })
+    : [];
+  const reactants = sanitizeSpecies(value.reactants);
+  if (!formula || !candidates.length || !reactants.length) {
+    return jsonResponse({ error: "Provide a formula, PubChem candidates, and reactants." }, 400);
+  }
+  try {
+    return jsonResponse(
+      await resolveStructureCandidate({
+        formula,
+        candidates: candidates.slice(0, 25),
+        reactants,
+        ...(typeof value.reactionName === "string" && value.reactionName
+          ? { reactionName: value.reactionName.slice(0, 300) }
+          : {}),
+        ...(typeof value.condition === "string" && value.condition
+          ? { condition: value.condition.slice(0, 500) }
+          : {}),
+      }),
+    );
+  } catch (error) {
+    return jsonResponse(
+      {
+        error:
+          error instanceof Error ? error.message : "The model could not resolve the structure.",
+      },
+      502,
+    );
+  }
 }
 
 async function handleReactions(request: Request) {
@@ -621,6 +785,10 @@ const server = serve({
     if (url.pathname === "/api/reactions") {
       if (request.method === "GET") return handleHealth();
       if (request.method === "POST") return handleReactions(request);
+      return jsonResponse({ error: "Method not allowed." }, 405);
+    }
+    if (url.pathname === "/api/resolve-structure") {
+      if (request.method === "POST") return handleStructureResolution(request);
       return jsonResponse({ error: "Method not allowed." }, 405);
     }
     if (url.pathname.startsWith("/api/")) {

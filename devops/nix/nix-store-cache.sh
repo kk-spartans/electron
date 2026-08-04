@@ -17,7 +17,7 @@ case "$cmd" in
     default_out=$(nix path-info .#default)
     reactions_out=$(nix path-info .#reactions)
     paths="$docker_out $default_out $reactions_out"
-    bun_deps_drv=$(nix-store -qR "$(nix eval --raw "$target.drvPath")" | grep -m1 'electron-bun-deps.*\.drv$' || true)
+    bun_deps_drv=$(nix-store -qR "$(nix eval --raw "$target.drvPath")" | grep -E -m1 'electron-bun-deps(-[0-9][^/]*)?\.drv$' || true)
     if [ -n "$bun_deps_drv" ]; then
       paths="$paths $(nix-store -q --outputs "$bun_deps_drv")"
     fi

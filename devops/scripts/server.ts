@@ -621,7 +621,8 @@ function extractJson(content: string): unknown {
 
 function selectedStructureCandidate(value: unknown, candidates: StructureCandidate[]) {
   if (!value || typeof value !== "object") return undefined;
-  const cid = (value as { cid?: unknown }).cid;
+  const selection = value as { cid?: unknown; CID?: unknown };
+  const cid = selection.cid ?? selection.CID;
   if (typeof cid !== "number" || !Number.isInteger(cid)) return undefined;
   return candidates.find((candidate) => candidate.cid === cid);
 }

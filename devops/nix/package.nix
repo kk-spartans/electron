@@ -40,6 +40,9 @@ stdenv.mkDerivation {
       && !(lib.hasInfix "/public/reactions" (toString name))
       && !(lib.hasInfix "/public/rdkit" (toString name));
   };
+  # Bun's compiled executable contains the application in embedded sections;
+  # the generic Nix strip phase removes those sections.
+  dontStrip = true;
   dontPatchELF = true;
   nativeBuildInputs = [ bun ];
   buildInputs = [ cacert ];

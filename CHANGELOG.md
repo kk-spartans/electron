@@ -1,3 +1,10 @@
+## [1.6.5](https://github.com/kk-spartans/electron/compare/v1.6.4...v1.6.5) (2026-08-04)
+
+
+### Bug Fixes
+
+* accept normalized CID selection JSON ([ebee40f](https://github.com/kk-spartans/electron/commit/ebee40fd37363becf30300f76928bcab89bbab85))
+
 ## [1.6.4](https://github.com/kk-spartans/electron/compare/v1.6.3...v1.6.4) (2026-08-04)
 
 

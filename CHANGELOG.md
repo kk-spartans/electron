@@ -1,3 +1,11 @@
+## [1.6.2](https://github.com/kk-spartans/electron/compare/v1.6.1...v1.6.2) (2026-08-04)
+
+
+### Bug Fixes
+
+* export the actual Bun dependency closure ([9f119bb](https://github.com/kk-spartans/electron/commit/9f119bb6d02cd7582f0116fe704fe5eb9be4305b))
+* preserve reaction build cache across releases ([941411d](https://github.com/kk-spartans/electron/commit/941411d5df6dd685f1d564cd00733466f94ce740))
+
 ## [1.6.1](https://github.com/kk-spartans/electron/compare/v1.6.0...v1.6.1) (2026-08-04)
 
 

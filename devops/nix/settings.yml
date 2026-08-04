@@ -1,0 +1,21 @@
+# SearXNG settings with its JSON API enabled.
+use_default_settings: true
+
+general:
+  instance_name: "electron"
+  debug: false
+  privacypolicy_url: false
+  contact_url: false
+  enable_metrics: false
+
+search:
+  formats:
+    - html
+    - json
+
+server:
+  secret_key: "change-me-in-production"
+  bind_address: "0.0.0.0"
+  port: 8080
+  limiter: false
+  image_proxy: false

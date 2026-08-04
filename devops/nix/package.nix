@@ -40,7 +40,6 @@ stdenv.mkDerivation {
       && !(lib.hasInfix "/public/reactions" (toString name))
       && !(lib.hasInfix "/public/rdkit" (toString name));
   };
-  dontStrip = true;
   dontPatchELF = true;
   nativeBuildInputs = [ bun ];
   buildInputs = [ cacert ];
@@ -59,7 +58,7 @@ stdenv.mkDerivation {
     runHook preInstall
     mkdir -p $out/bin $out/out
     cp -r out/* $out/out/
-    bun build --compile --outfile dist/electron-server devops/scripts/server.ts
+    bun build --compile --minify --outfile dist/electron-server devops/scripts/server.ts
     cp dist/electron-server $out/bin/electron-server
     runHook postInstall
   '';

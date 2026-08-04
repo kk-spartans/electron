@@ -10,6 +10,7 @@
 //   OPENAI_BASE_URL    base URL for chat completions (default: https://api.openai.com/v1)
 //   OPENAI_API_KEY     API key for the model provider
 //   OPENAI_MODEL       model to use (default: gpt-4o-mini)
+//   SEARXNG_BASE_URL   internal SearXNG URL for optional model web searches (default: http://localhost:8080)
 //   REACTION_CACHE_DIR directory for persisted AI reaction responses (default: .cache/ai-reactions)
 //   REACTION_CACHE_MAX in-memory cache entry cap before reset (default: 10000)
 
@@ -25,11 +26,19 @@ const openaiBaseUrl = (process.env.OPENAI_BASE_URL ?? "https://api.openai.com/v1
 );
 const openaiApiKey = process.env.OPENAI_API_KEY ?? "";
 const openaiModel = process.env.OPENAI_MODEL ?? "gpt-4o-mini";
+const searxngBaseUrl = (process.env.SEARXNG_BASE_URL ?? "http://localhost:8080").replace(
+  /\/+$/,
+  "",
+);
 const reactionCacheDir = process.env.REACTION_CACHE_DIR ?? ".cache/ai-reactions";
 const reactionCacheMax = Number(process.env.REACTION_CACHE_MAX ?? 10_000);
 
 const reactionCache = new Map<string, unknown>();
 const inFlight = new Map<string, Promise<unknown>>();
+
+type StructuredOutputSupport = "supported" | "unsupported" | "unknown";
+
+let structuredOutputSupport: StructuredOutputSupport = "unknown";
 
 function reactionCacheKey(input: ReactionInput) {
   const reactants = input.reactants
@@ -193,12 +202,14 @@ Return ONLY strict JSON matching this schema, with no commentary:
 const reactionSchema = {
   type: "object",
   required: ["reactions"],
+  additionalProperties: false,
   properties: {
     reactions: {
       type: "array",
       items: {
         type: "object",
-        required: ["reactants", "products"],
+        required: ["name", "condition", "reactants", "products"],
+        additionalProperties: false,
         properties: {
           name: { type: "string" },
           condition: { type: "string" },
@@ -206,9 +217,11 @@ const reactionSchema = {
             type: "array",
             items: {
               type: "object",
-              required: ["formula"],
+              required: ["formula", "name", "coefficient"],
+              additionalProperties: false,
               properties: {
                 formula: { type: "string" },
+                name: { type: "string" },
                 coefficient: { type: "integer" },
               },
             },
@@ -217,9 +230,11 @@ const reactionSchema = {
             type: "array",
             items: {
               type: "object",
-              required: ["formula"],
+              required: ["formula", "name", "coefficient"],
+              additionalProperties: false,
               properties: {
                 formula: { type: "string" },
+                name: { type: "string" },
                 coefficient: { type: "integer" },
               },
             },
@@ -230,7 +245,7 @@ const reactionSchema = {
   },
 };
 
-function buildPrompt(input: ReactionInput) {
+function buildPrompt(input: ReactionInput, useStructuredOutput: boolean) {
   const species = [
     ...input.reactants.map(
       (reactant) => `reactant: ${reactant.formula}${reactant.name ? ` (${reactant.name})` : ""}`,
@@ -239,24 +254,77 @@ function buildPrompt(input: ReactionInput) {
       (product) => `known product: ${product.formula}${product.name ? ` (${product.name})` : ""}`,
     ),
   ];
-  return {
+  const body = {
     model: openaiModel,
     temperature: 0.2,
     reasoning_effort: "none",
-    response_format: {
-      type: "json_schema",
-      json_schema: { name: "reactions", strict: true, schema: reactionSchema },
-    },
+    tools: [
+      {
+        type: "function",
+        function: {
+          name: "web_search",
+          description:
+            "Search the web for current or obscure chemistry information when it would improve the answer.",
+          parameters: {
+            type: "object",
+            properties: { query: { type: "string", description: "The search query" } },
+            required: ["query"],
+            additionalProperties: false,
+          },
+        },
+      },
+    ],
     messages: [
-      { role: "system", content: systemPrompt },
+      {
+        role: "system",
+        content: `${systemPrompt}\nYou may call the web_search tool when current or obscure information would help. Use its returned contents as evidence, but still return only the requested JSON.`,
+      },
       { role: "user", content: `Species:\n${species.join("\n")}` },
     ],
   };
+  return useStructuredOutput
+    ? {
+        ...body,
+        response_format: {
+          type: "json_schema",
+          json_schema: { name: "reactions", strict: true, schema: reactionSchema },
+        },
+      }
+    : body;
 }
 
-async function chatCompletions(body: unknown, allowUnstructured = true) {
+function logOpenAIRequest(body: unknown) {
+  console.log(
+    `[openai] request ${JSON.stringify({
+      method: "POST",
+      url: `${openaiBaseUrl}/chat/completions`,
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: openaiApiKey ? "Bearer [redacted]" : "Bearer [not configured]",
+      },
+      body,
+    })}`,
+  );
+}
+
+function logOpenAIResponse(
+  response: { status: number; statusText: string; headers: Headers },
+  body: string,
+) {
+  console.log(
+    `[openai] response ${JSON.stringify({
+      status: response.status,
+      statusText: response.statusText,
+      headers: Object.fromEntries(response.headers.entries()),
+      body,
+    })}`,
+  );
+}
+
+async function openAIRequest(body: unknown, timeoutMs = 300_000) {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 300_000);
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  logOpenAIRequest(body);
   try {
     const response = await fetch(`${openaiBaseUrl}/chat/completions`, {
       method: "POST",
@@ -267,43 +335,214 @@ async function chatCompletions(body: unknown, allowUnstructured = true) {
       body: JSON.stringify(body),
       signal: controller.signal,
     });
-    if (
-      allowUnstructured &&
-      (response.status === 400 || response.status === 422) &&
-      typeof body === "object" &&
-      body !== null &&
-      "response_format" in body
-    ) {
-      const { response_format: _dropped, ...retryBody } = body as Record<string, unknown> & {
-        response_format?: unknown;
-      };
-      return chatCompletions(retryBody, false);
-    }
-    if (!response.ok) {
-      const detail = await response.text().catch(() => "");
-      throw new Error(
-        `model provider returned ${response.status}${detail ? `: ${detail.slice(0, 300)}` : ""}`,
-      );
-    }
-    return (await response.json()) as {
-      choices?: Array<{ message?: { content?: string } }>;
-    };
+    const rawBody = await response.text();
+    logOpenAIResponse(response, rawBody);
+    return { response, rawBody };
+  } catch (error) {
+    console.error(
+      `[openai] request failed ${JSON.stringify({
+        error: error instanceof Error ? error.message : String(error),
+      })}`,
+    );
+    throw error;
   } finally {
     clearTimeout(timeout);
   }
 }
 
+function providerError(status: number, rawBody: string) {
+  return new Error(
+    `model provider returned ${status}${rawBody ? `: ${rawBody.slice(0, 300)}` : ""}`,
+  );
+}
+
+async function chatCompletions(body: unknown, allowUnstructured = true) {
+  const { response, rawBody } = await openAIRequest(body);
+  if (
+    allowUnstructured &&
+    (response.status === 400 || response.status === 422) &&
+    typeof body === "object" &&
+    body !== null &&
+    "response_format" in body
+  ) {
+    structuredOutputSupport = "unsupported";
+    const { response_format: _dropped, ...retryBody } = body as Record<string, unknown> & {
+      response_format?: unknown;
+    };
+    return chatCompletions(retryBody, false);
+  }
+  if (!response.ok) throw providerError(response.status, rawBody);
+  return JSON.parse(rawBody) as ChatPayload;
+}
+
+const structuredOutputProbeBody = {
+  model: openaiModel,
+  temperature: 0,
+  max_tokens: 16,
+  response_format: {
+    type: "json_schema",
+    json_schema: {
+      name: "structured_output_probe",
+      strict: true,
+      schema: {
+        type: "object",
+        properties: { supported: { type: "boolean" } },
+        required: ["supported"],
+        additionalProperties: false,
+      },
+    },
+  },
+  messages: [
+    { role: "system", content: "Return the requested JSON object." },
+    { role: "user", content: 'Return {"supported":true}.' },
+  ],
+};
+
+async function probeStructuredOutputSupport() {
+  if (!openaiApiKey) {
+    console.log("[openai] structured-output probe skipped: OPENAI_API_KEY is not configured");
+    return;
+  }
+  try {
+    const { response } = await openAIRequest(structuredOutputProbeBody, 30_000);
+    if (response.ok) {
+      structuredOutputSupport = "supported";
+    } else if (response.status === 400 || response.status === 422) {
+      structuredOutputSupport = "unsupported";
+    }
+    console.log(`[openai] structured-output support: ${structuredOutputSupport}`);
+  } catch {
+    console.log("[openai] structured-output support: unknown");
+  }
+}
+
+const structuredOutputProbe = probeStructuredOutputSupport();
+
+type ChatMessage = {
+  role: string;
+  content?: string | null;
+  tool_call_id?: string;
+  tool_calls?: Array<{
+    id: string;
+    type: string;
+    function: { name: string; arguments: string };
+  }>;
+};
+
+type ChatPayload = {
+  choices?: Array<{
+    message?: {
+      content?: string | null;
+      tool_calls?: ChatMessage["tool_calls"];
+    };
+  }>;
+};
+
+async function searchWeb(query: string) {
+  const url = `${searxngBaseUrl}/search?q=${encodeURIComponent(query)}&format=json&language=en`;
+  console.log(`[searxng] request ${JSON.stringify({ method: "GET", url })}`);
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 15_000);
+  try {
+    const response = await fetch(url, { signal: controller.signal });
+    const rawBody = await response.text();
+    console.log(
+      `[searxng] response ${JSON.stringify({
+        status: response.status,
+        statusText: response.statusText,
+        headers: Object.fromEntries(response.headers.entries()),
+        body: rawBody,
+      })}`,
+    );
+    if (!response.ok) return "No search results found.";
+    const data = JSON.parse(rawBody) as {
+      results?: Array<{ title?: string; url?: string; content?: string }>;
+    };
+    const results = data.results?.slice(0, 5) ?? [];
+    if (!results.length) return "No search results found.";
+    return results
+      .map(
+        (result) =>
+          `Title: ${result.title ?? "N/A"}\nURL: ${result.url ?? "N/A"}\nContent: ${result.content ?? "N/A"}`,
+      )
+      .join("\n\n");
+  } catch (error) {
+    console.error(
+      `[searxng] request failed ${JSON.stringify({
+        error: error instanceof Error ? error.message : String(error),
+      })}`,
+    );
+    return `Search failed: ${error instanceof Error ? error.message : String(error)}`;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function completeReaction(input: ReactionInput): Promise<ChatPayload> {
+  await structuredOutputProbe;
+  const useStructuredOutput = structuredOutputSupport === "supported";
+  const initialBody = buildPrompt(input, useStructuredOutput) as {
+    messages: ChatMessage[];
+    [key: string]: unknown;
+  };
+  let body = initialBody;
+
+  for (let turn = 0; turn < 5; turn++) {
+    const payload = await chatCompletions(body);
+    const message = payload.choices?.[0]?.message;
+    const toolCalls = message?.tool_calls ?? [];
+    if (!toolCalls.length) return payload;
+
+    const assistantMessage: ChatMessage = {
+      role: "assistant",
+      content: message?.content ?? null,
+      tool_calls: toolCalls,
+    };
+    const toolMessages: ChatMessage[] = [];
+    for (const toolCall of toolCalls) {
+      let result = "Unknown tool.";
+      if (toolCall.function.name === "web_search") {
+        try {
+          const argumentsValue = JSON.parse(toolCall.function.arguments) as { query?: unknown };
+          result =
+            typeof argumentsValue.query === "string" && argumentsValue.query.trim()
+              ? await searchWeb(argumentsValue.query.trim())
+              : "Search failed: the query was empty.";
+        } catch (error) {
+          result = `Search failed: ${error instanceof Error ? error.message : String(error)}`;
+        }
+      }
+      toolMessages.push({ role: "tool", tool_call_id: toolCall.id, content: result });
+    }
+    body = {
+      ...body,
+      messages: [...body.messages, assistantMessage, ...toolMessages],
+    };
+  }
+  throw new Error("The model requested too many web searches.");
+}
+
 function extractJson(content: string): unknown {
-  const start = content.indexOf("{");
-  const end = content.lastIndexOf("}");
+  const trimmed = content
+    .trim()
+    .replace(/^```(?:json)?\s*/i, "")
+    .replace(/\s*```$/, "")
+    .trim();
+  try {
+    return JSON.parse(trimmed);
+  } catch {
+    // Fall through to extracting JSON surrounded by prose or a code fence.
+  }
+  const start = trimmed.indexOf("{");
+  const end = trimmed.lastIndexOf("}");
   if (start !== -1 && end > start) {
     try {
-      return JSON.parse(content.slice(start, end + 1));
+      return JSON.parse(trimmed.slice(start, end + 1));
     } catch {
-      // Fall through to a direct parse of the trimmed content.
+      // Let the caller report invalid JSON.
     }
   }
-  return JSON.parse(content.trim());
+  throw new Error("Invalid JSON");
 }
 
 async function handleReactions(request: Request) {
@@ -329,9 +568,9 @@ async function handleReactions(request: Request) {
   const pending = inFlight.get(cacheKey);
   if (pending) return jsonResponse(await pending);
   const compute = (async () => {
-    let payload: { choices?: Array<{ message?: { content?: string } }> };
+    let payload: ChatPayload;
     try {
-      payload = await chatCompletions(buildPrompt(input));
+      payload = await completeReaction(input);
     } catch (error) {
       throw new Error(error instanceof Error ? error.message : "The model could not be reached.");
     }
@@ -368,6 +607,8 @@ function handleHealth() {
     service: "electron-reaction-api",
     model: openaiModel,
     aiConfigured: Boolean(openaiApiKey),
+    structuredOutputSupport,
+    searxngBaseUrl,
     cacheSize: reactionCache.size,
   });
 }

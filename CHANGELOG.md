@@ -1,3 +1,10 @@
+## [1.6.4](https://github.com/kk-spartans/electron/compare/v1.6.3...v1.6.4) (2026-08-04)
+
+
+### Bug Fixes
+
+* resolve ambiguous AI products with model ([3c70f24](https://github.com/kk-spartans/electron/commit/3c70f24046b3013183a54763321786e76c9f000a))
+
 ## [1.6.3](https://github.com/kk-spartans/electron/compare/v1.6.2...v1.6.3) (2026-08-04)
 
 

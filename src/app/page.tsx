@@ -4071,6 +4071,15 @@ function usableReactionProduct(record: StructureRecord) {
   );
 }
 
+async function lookupAIReactionProduct(formula: string) {
+  const result = await lookupStructure(formula);
+  if (result.record || !result.candidates?.length) return result;
+  // Formula searches can return isotopes and salts as well as the canonical
+  // compound. AI reactions do not have a UI candidate picker, so use PubChem's
+  // first (canonical) match for this background resolution.
+  return lookupStructure(`cid:${result.candidates[0].cid}`);
+}
+
 function greatestCommonDivisor(first: number, second: number): number {
   return second ? greatestCommonDivisor(second, first % second) : Math.abs(first);
 }
@@ -4280,7 +4289,7 @@ async function queryAIReactions(
       const products: ReactionRecipe["products"] = [];
       let resolvable = true;
       for (const formula of productFormulas) {
-        const resolved = await lookupStructure(formula);
+        const resolved = await lookupAIReactionProduct(formula);
         if (!resolved.record?.cid || !usableReactionProduct(resolved.record)) {
           resolvable = false;
           break;

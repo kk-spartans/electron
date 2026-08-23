@@ -50,6 +50,7 @@ async function pubchem(path: string) {
   for (let attempt = 0; attempt < 4; attempt++) {
     const response = await fetch(`https://pubchem.ncbi.nlm.nih.gov/rest/pug/${path}`, {
       headers: { Accept: "application/json" },
+      signal: AbortSignal.timeout(15_000),
     });
     if (response.ok) {
       const data = await response.json();

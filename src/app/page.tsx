@@ -1074,8 +1074,16 @@ export default function Home() {
           pending = discoverReactionChoices(pair.first, pair.second);
           reactionChoiceCache.set(key, pending);
         }
-        const routes = await pending;
-        if (!routes.length) reactionChoiceCache.delete(key);
+        let routes: ReactionRecipe[] = [];
+        try {
+          routes = await pending;
+        } catch (error) {
+          aiReactionLastError =
+            error instanceof Error
+              ? `The structure lookup failed: ${error.message}`
+              : "The structure lookup failed.";
+          reactionChoiceCache.delete(key);
+        }
         if (!current) return;
         const knownProducts = [
           ...new Set(routes.flatMap((route) => route.products.map((product) => product.formula))),
@@ -1576,9 +1584,21 @@ export default function Home() {
     const originalAtomIds = entities.flatMap((entity) => entity.atomIds);
     const spawnedAtomIds: number[] = [];
     let copyIndex = 1;
-    recipe.reactants.forEach((reactant, index) => {
-      for (let copy = 1; copy < reactant.coefficient; copy++)
-        spawnedAtomIds.push(...cloneEntity(entities[index], copyIndex++));
+    const pendingEntities = [...entities];
+    const matchedEntities = recipe.reactants.map((reactant) => {
+      const wanted = plainFormula(reactant.formula);
+      const index = pendingEntities.findIndex(
+        (candidate) =>
+          candidate.formula === reactant.formula || plainFormula(candidate.formula) === wanted,
+      );
+      if (index < 0) return undefined;
+      return pendingEntities.splice(index, 1)[0];
+    });
+    matchedEntities.forEach((entity, index) => {
+      if (!entity && pendingEntities.length) entity = pendingEntities.shift();
+      if (!entity) return;
+      for (let copy = 1; copy < recipe.reactants[index].coefficient; copy++)
+        spawnedAtomIds.push(...cloneEntity(entity, copyIndex++));
     });
     const atomIds = [...originalAtomIds, ...spawnedAtomIds];
     const center = {

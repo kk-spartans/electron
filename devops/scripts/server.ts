@@ -387,32 +387,64 @@ function logOpenAIResponse(
   );
 }
 
+const TRANSIENT_STATUS_CODES = new Set([408, 429, 500, 502, 503, 504]);
+const RETRY_DELAYS_MS = [1_000, 5_000];
+
+function isTransientNetworkError(error: unknown) {
+  // Abort/timeout means the caller gave up; anything else (DNS, connect,
+  // reset, body read) is worth another attempt.
+  if (!(error instanceof Error)) return false;
+  return error.name !== "AbortError" && error.name !== "TimeoutError";
+}
+
 async function openAIRequest(body: unknown, timeoutMs = 300_000) {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), timeoutMs);
   logOpenAIRequest(body);
-  try {
-    const response = await fetch(`${openaiBaseUrl}/chat/completions`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        ...(openaiApiKey ? { Authorization: `Bearer ${openaiApiKey}` } : {}),
-      },
-      body: JSON.stringify(body),
-      signal: controller.signal,
-    });
-    const rawBody = await response.text();
-    logOpenAIResponse(response, rawBody);
-    return { response, rawBody };
-  } catch (error) {
-    console.error(
-      `[openai] request failed ${JSON.stringify({
-        error: error instanceof Error ? error.message : String(error),
-      })}`,
-    );
-    throw error;
-  } finally {
-    clearTimeout(timeout);
+  for (let attempt = 0; ; attempt++) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const response = await fetch(`${openaiBaseUrl}/chat/completions`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(openaiApiKey ? { Authorization: `Bearer ${openaiApiKey}` } : {}),
+        },
+        body: JSON.stringify(body),
+        signal: controller.signal,
+      });
+      const rawBody = await response.text();
+      logOpenAIResponse(response, rawBody);
+      if (TRANSIENT_STATUS_CODES.has(response.status) && attempt < RETRY_DELAYS_MS.length) {
+        const delay = RETRY_DELAYS_MS[attempt];
+        console.log(
+          `[openai] transient ${response.status}, retrying in ${delay}ms (attempt ${
+            attempt + 2
+          }/${RETRY_DELAYS_MS.length + 1})`,
+        );
+        await new Promise((resolve) => setTimeout(resolve, delay));
+        continue;
+      }
+      return { response, rawBody };
+    } catch (error) {
+      if (attempt < RETRY_DELAYS_MS.length && isTransientNetworkError(error)) {
+        const delay = RETRY_DELAYS_MS[attempt];
+        console.log(
+          `[openai] request error ${
+            error instanceof Error ? error.message : String(error)
+          }, retrying in ${delay}ms (attempt ${attempt + 2}/${RETRY_DELAYS_MS.length + 1})`,
+        );
+        await new Promise((resolve) => setTimeout(resolve, delay));
+        continue;
+      }
+      console.error(
+        `[openai] request failed ${JSON.stringify({
+          error: error instanceof Error ? error.message : String(error),
+        })}`,
+      );
+      throw error;
+    } finally {
+      clearTimeout(timeout);
+    }
   }
 }
 

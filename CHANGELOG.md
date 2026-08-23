@@ -1,3 +1,10 @@
+## [1.6.8](https://github.com/kk-spartans/electron/compare/v1.6.7...v1.6.8) (2026-08-23)
+
+
+### Bug Fixes
+
+* match reaction clones by formula and harden lookups ([47739d3](https://github.com/kk-spartans/electron/commit/47739d3eec9521f69939bd6487b8e323933c82d6))
+
 ## [1.6.7](https://github.com/kk-spartans/electron/compare/v1.6.6...v1.6.7) (2026-08-23)
 
 

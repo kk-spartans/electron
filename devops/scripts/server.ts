@@ -283,7 +283,6 @@ function buildPrompt(input: ReactionInput, useStructuredOutput: boolean) {
   const body = {
     model: openaiModel,
     temperature: 0.2,
-    reasoning_effort: "none",
     tools: [webSearchTool],
     messages: [
       {
@@ -323,7 +322,6 @@ function buildStructureSelectionPrompt(
   const body = {
     model: openaiModel,
     temperature: 0,
-    reasoning_effort: "none",
     tools: [webSearchTool],
     messages: [
       {
@@ -398,7 +396,7 @@ async function openAIRequest(body: unknown, timeoutMs = 300_000) {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        Authorization: `Bearer ${openaiApiKey}`,
+        ...(openaiApiKey ? { Authorization: `Bearer ${openaiApiKey}` } : {}),
       },
       body: JSON.stringify(body),
       signal: controller.signal,
@@ -467,10 +465,6 @@ const structuredOutputProbeBody = {
 };
 
 async function probeStructuredOutputSupport() {
-  if (!openaiApiKey) {
-    console.log("[openai] structured-output probe skipped: OPENAI_API_KEY is not configured");
-    return;
-  }
   try {
     const { response } = await openAIRequest(structuredOutputProbeBody, 30_000);
     if (response.ok) {
@@ -659,7 +653,6 @@ async function resolveStructureCandidate(input: {
 }
 
 async function handleStructureResolution(request: Request) {
-  if (!openaiApiKey) return jsonResponse({ error: "OPENAI_API_KEY is not configured." }, 503);
   let raw: unknown;
   try {
     raw = await request.json();
@@ -716,9 +709,6 @@ async function handleStructureResolution(request: Request) {
 }
 
 async function handleReactions(request: Request) {
-  if (!openaiApiKey) {
-    return jsonResponse({ error: "OPENAI_API_KEY is not configured." }, 503);
-  }
   let raw: unknown;
   try {
     raw = await request.json();
@@ -776,34 +766,55 @@ function handleHealth() {
     ok: true,
     service: "electron-reaction-api",
     model: openaiModel,
-    aiConfigured: Boolean(openaiApiKey),
+    apiKeyPresent: Boolean(openaiApiKey),
     structuredOutputSupport,
     searxngBaseUrl,
     cacheSize: reactionCache.size,
   });
 }
 
+async function routeRequest(request: Request, url: URL): Promise<Response> {
+  if (url.pathname === "/api/reactions") {
+    if (request.method === "GET") return handleHealth();
+    if (request.method === "POST") return handleReactions(request);
+    return jsonResponse({ error: "Method not allowed." }, 405);
+  }
+  if (url.pathname === "/api/resolve-structure") {
+    if (request.method === "POST") return handleStructureResolution(request);
+    return jsonResponse({ error: "Method not allowed." }, 405);
+  }
+  if (url.pathname.startsWith("/api/")) {
+    return jsonResponse({ error: "Not found." }, 404);
+  }
+  return serveStatic(url.pathname);
+}
+
 const server = serve({
   port,
   hostname: "0.0.0.0",
-  fetch(request) {
+  async fetch(request) {
+    const startedAt = Date.now();
     const url = new URL(request.url);
-    if (url.pathname === "/api/reactions") {
-      if (request.method === "GET") return handleHealth();
-      if (request.method === "POST") return handleReactions(request);
-      return jsonResponse({ error: "Method not allowed." }, 405);
-    }
-    if (url.pathname === "/api/resolve-structure") {
-      if (request.method === "POST") return handleStructureResolution(request);
-      return jsonResponse({ error: "Method not allowed." }, 405);
+    let response: Response;
+    try {
+      response = await routeRequest(request, url);
+    } catch (error) {
+      response = jsonResponse(
+        { error: error instanceof Error ? error.message : "Internal server error." },
+        500,
+      );
     }
     if (url.pathname.startsWith("/api/")) {
-      return jsonResponse({ error: "Not found." }, 404);
+      console.log(
+        `[http] ${request.method} ${url.pathname}${url.search} -> ${response.status} (${
+          Date.now() - startedAt
+        }ms)`,
+      );
     }
-    return serveStatic(url.pathname);
+    return response;
   },
 });
 
 console.log(`Electron API server listening on http://0.0.0.0:${server.port}`);
 console.log(`Serving static site from ${root}`);
-console.log(`Reaction model: ${openaiModel} (${openaiApiKey ? "configured" : "NOT configured"})`);
+console.log(`Reaction model: ${openaiModel}${openaiApiKey ? "" : " (keyless)"}`);

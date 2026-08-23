@@ -110,6 +110,7 @@ const reactionChoiceCache = new Map<string, Promise<ReactionRecipe[]>>();
 const structureRecognitionCache = new Map<string, Promise<StructureRecord | undefined>>();
 const aiReactionCache = new Map<string, Promise<ReactionRecipe[]>>();
 let aiReactionApiAvailable: boolean | null = null;
+let aiReactionLastError = "";
 const aiReactionEndpoint = process.env.NEXT_PUBLIC_REACTION_API ?? "/api/reactions";
 const aiStructureEndpoint =
   process.env.NEXT_PUBLIC_REACTION_API_RESOLVE ?? "/api/resolve-structure";
@@ -469,6 +470,7 @@ export default function Home() {
   const [reactionChoices, setReactionChoices] = useState<ReactionRecipe[]>([]);
   const [reactionSearching, setReactionSearching] = useState(false);
   const [reactionSearchEmpty, setReactionSearchEmpty] = useState(false);
+  const [reactionAiError, setReactionAiError] = useState("");
   const [ionicElectronTransfers, setIonicElectronTransfers] = useState<
     Array<{ id: number; from: AtomNode; to: AtomNode }>
   >([]);
@@ -1057,6 +1059,7 @@ export default function Home() {
     let current = true;
     setReactionChoices([]);
     setReactionSearchEmpty(false);
+    setReactionAiError("");
     reactionPairRef.current = null;
     setReactionSearching(Boolean(reactionCandidate) && !preparedReaction);
     if (!reactionCandidate || preparedReaction) return;
@@ -1091,6 +1094,7 @@ export default function Home() {
       if (current) {
         setReactionSearching(false);
         setReactionSearchEmpty(true);
+        if (aiReactionLastError) setReactionAiError(aiReactionLastError);
       }
     };
     void discover();
@@ -2667,7 +2671,11 @@ export default function Home() {
             {(reactionSearching || reactionSearchEmpty) && (
               <output className="reaction-status" aria-live="polite">
                 {reactionSearching && <i aria-hidden="true" />}
-                {reactionSearching ? "Checking reactions" : "No reported reaction"}
+                {reactionSearching
+                  ? "Checking reactions"
+                  : reactionAiError
+                    ? `No reported reaction · ${reactionAiError}`
+                    : "No reported reaction"}
               </output>
             )}
             {selectionBox && (
@@ -4290,11 +4298,19 @@ async function queryAIReactions(
       }),
       signal: AbortSignal.timeout(320_000),
     });
-    if (response.status >= 400) {
-      aiReactionApiAvailable = false;
+    if (!response.ok) {
+      if (response.status === 404 || response.status === 405 || response.status === 501) {
+        aiReactionApiAvailable = false;
+      } else {
+        let detail = "";
+        try {
+          const body = (await response.json()) as { error?: string };
+          if (typeof body.error === "string") detail = body.error;
+        } catch {}
+        aiReactionLastError = detail || `The reaction API returned ${response.status}.`;
+      }
       return [];
     }
-    if (!response.ok) return [];
     const payload = (await response.json()) as {
       source?: string;
       model?: string;
@@ -4305,6 +4321,7 @@ async function queryAIReactions(
         products: Array<{ formula: string; coefficient?: number }>;
       }>;
     };
+    aiReactionLastError = "";
     const routes: ReactionRecipe[] = [];
     for (const candidate of payload.reactions ?? []) {
       if (!Array.isArray(candidate.reactants) || !Array.isArray(candidate.products)) continue;
@@ -4347,7 +4364,13 @@ async function queryAIReactions(
       });
     }
     return routes;
-  } catch {
+  } catch (error) {
+    aiReactionLastError =
+      error instanceof Error
+        ? error.name === "TimeoutError"
+          ? "The reaction API timed out."
+          : `The reaction API failed: ${error.message}`
+        : "The reaction API could not be reached.";
     return [];
   }
 }

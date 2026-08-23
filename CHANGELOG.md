@@ -1,3 +1,10 @@
+## [1.6.7](https://github.com/kk-spartans/electron/compare/v1.6.6...v1.6.7) (2026-08-23)
+
+
+### Bug Fixes
+
+* allow keyless reaction API and surface provider errors ([580dd91](https://github.com/kk-spartans/electron/commit/580dd916b57124e339bad2892c310c8be2d24ab3))
+
 ## [1.6.6](https://github.com/kk-spartans/electron/compare/v1.6.5...v1.6.6) (2026-08-04)
 
 

@@ -1,5 +1,13 @@
 # SearXNG settings with its JSON API enabled.
-use_default_settings: true
+use_default_settings:
+  engines:
+    remove:
+      # Tor onion engines: they cannot load without Tor support and only
+      # produce startup errors in this container.
+      - ahmia
+      - torch
+      # The SPARQL init request is blocked (403) from datacenter IPs.
+      - wikidata
 
 general:
   instance_name: "electron"

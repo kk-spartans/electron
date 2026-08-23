@@ -7,7 +7,7 @@
           "volumes":
             [
               "./settings.yml:/etc/searxng/settings.yml:ro",
-              "./limiter.toml:/etc/searxng/limiter.toml:ro"
+              "./limiter.toml:/etc/searxng/limiter.toml:ro",
             ],
           "restart": "unless-stopped",
           "cap_drop": ["ALL"],

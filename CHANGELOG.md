@@ -1,3 +1,10 @@
+## [1.6.10](https://github.com/kk-spartans/electron/compare/v1.6.9...v1.6.10) (2026-08-23)
+
+
+### Bug Fixes
+
+* retry transient model provider failures ([b50b524](https://github.com/kk-spartans/electron/commit/b50b524391e2bcfc79f1c33f0cf4dea85ae1b818))
+
 ## [1.6.9](https://github.com/kk-spartans/electron/compare/v1.6.8...v1.6.9) (2026-08-23)
 
 

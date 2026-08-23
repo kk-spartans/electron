@@ -1,3 +1,10 @@
+## [1.6.9](https://github.com/kk-spartans/electron/compare/v1.6.8...v1.6.9) (2026-08-23)
+
+
+### Bug Fixes
+
+* drop unusable searxng engines and silence limiter warning ([fd981e9](https://github.com/kk-spartans/electron/commit/fd981e9ffcdbda6274db12412c385777b39cfc26))
+
 ## [1.6.8](https://github.com/kk-spartans/electron/compare/v1.6.7...v1.6.8) (2026-08-23)
 
 

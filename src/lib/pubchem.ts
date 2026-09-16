@@ -30,6 +30,13 @@ export type StructureResult = {
 };
 const MAX_AGE = 1000 * 60 * 60 * 24 * 7;
 
+function encodePathSegment(value: string) {
+  return encodeURIComponent(value).replace(
+    /[!'()*]/g,
+    (char) => `%${char.charCodeAt(0).toString(16).toUpperCase()}`,
+  );
+}
+
 function retryDelay(response: Response, attempt: number) {
   const retryAfter = Number(response.headers.get("retry-after"));
   return Number.isFinite(retryAfter) && retryAfter > 0
@@ -64,6 +71,7 @@ async function pubchem(path: string) {
     if (attempt < 3)
       await new Promise((resolve) => window.setTimeout(resolve, retryDelay(response, attempt)));
   }
+  if (lastStatus === 404) throw new Error("PubChem has no structure for that name.");
   throw new Error(`PubChem returned ${lastStatus}`);
 }
 
@@ -82,11 +90,11 @@ export async function lookupStructure(query: string): Promise<StructureResult> {
     const cidMatch = raw.match(/^(?:cid\s*:?\s*)?(\d+)$/i);
     if (cidMatch) cid = Number(cidMatch[1]);
     else if (/^smiles\s*:/i.test(raw))
-      inputPath = `smiles/${encodeURIComponent(raw.replace(/^smiles\s*:/i, "").trim())}`;
-    else if (!formula) inputPath = `name/${encodeURIComponent(raw)}`;
+      inputPath = `smiles/${encodePathSegment(raw.replace(/^smiles\s*:/i, "").trim())}`;
+    else if (!formula) inputPath = `name/${encodePathSegment(raw)}`;
     else {
       const search = (await pubchem(
-        `compound/fastformula/${encodeURIComponent(formula)}/cids/JSON?MaxRecords=25`,
+        `compound/fastformula/${encodePathSegment(formula)}/cids/JSON?MaxRecords=25`,
       )) as { IdentifierList?: { CID?: number[] } };
       const matches = search.IdentifierList?.CID ?? [];
       if (!matches.length) return { error: "PubChem has no structure for that formula." };

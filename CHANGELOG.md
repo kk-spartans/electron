@@ -1,3 +1,10 @@
+## [1.6.11](https://github.com/kk-spartans/electron/compare/v1.6.10...v1.6.11) (2026-09-17)
+
+
+### Bug Fixes
+
+* encode PubChem path segments and clarify 404 errors ([#1](https://github.com/kk-spartans/electron/issues/1)) ([ec563df](https://github.com/kk-spartans/electron/commit/ec563df42fbdc5f9f9413a330525c7838dca1130))
+
 ## [1.6.10](https://github.com/kk-spartans/electron/compare/v1.6.9...v1.6.10) (2026-08-23)
 
 

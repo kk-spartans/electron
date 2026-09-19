@@ -1250,15 +1250,23 @@ export default function Home() {
     if (!canvas) return;
     const handleWheel = (event: WheelEvent) => {
       event.preventDefault();
-      const box = canvas.getBoundingClientRect(),
-        pointerX = event.clientX - box.left,
-        pointerY = event.clientY - box.top;
-      const nextScale = Math.min(2.5, Math.max(0.25, scale * Math.exp(-event.deltaY * 0.0015)));
-      if (nextScale === scale) return;
-      const worldX = (pointerX - pan.x) / scale,
-        worldY = (pointerY - pan.y) / scale;
-      setPan({ x: pointerX - worldX * nextScale, y: pointerY - worldY * nextScale });
-      setScale(nextScale);
+      if (event.ctrlKey || event.metaKey) {
+        const box = canvas.getBoundingClientRect(),
+          pointerX = event.clientX - box.left,
+          pointerY = event.clientY - box.top;
+        const nextScale = Math.min(2.5, Math.max(0.25, scale * Math.exp(-event.deltaY * 0.01)));
+        if (nextScale === scale) return;
+        const worldX = (pointerX - pan.x) / scale,
+          worldY = (pointerY - pan.y) / scale;
+        setPan({ x: pointerX - worldX * nextScale, y: pointerY - worldY * nextScale });
+        setScale(nextScale);
+        return;
+      }
+      const lineHeight = event.deltaMode === 1 ? 16 : 1;
+      const deltaX = event.deltaMode === 2 ? 0 : event.deltaX * lineHeight;
+      const deltaY = event.deltaMode === 2 ? 0 : event.deltaY * lineHeight;
+      if (!deltaX && !deltaY) return;
+      setPan({ x: pan.x - deltaX, y: pan.y - deltaY });
     };
     canvas.addEventListener("wheel", handleWheel, { passive: false });
     return () => canvas.removeEventListener("wheel", handleWheel);
@@ -2725,7 +2733,7 @@ export default function Home() {
             {canvasNavigationHint && (
               <output className="canvas-navigation-toast" aria-live="polite">
                 <b>Selection started</b>
-                <span>Middle-drag to pan the canvas. Scroll to zoom at the pointer.</span>
+                <span>Two-finger drag to pan. Pinch or Ctrl + scroll to zoom at the pointer.</span>
               </output>
             )}
             <output className="zoom-percentage" aria-label="Canvas zoom">

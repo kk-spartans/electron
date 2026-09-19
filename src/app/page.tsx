@@ -7,6 +7,7 @@ import {
   ArrowsOut,
   Atom,
   FloppyDisk,
+  Link,
   MagnifyingGlass,
   Trash,
   X,
@@ -694,20 +695,31 @@ export default function Home() {
     let current = true;
     const restoreCanvas = async () => {
       if (!current) return;
+      const params = new URLSearchParams(window.location.search);
+      const urlSmiles = params.get("smiles");
       try {
         const saved = await readAutosavedCanvas();
-        if (saved) {
+        if (saved && !urlSmiles) {
           applyCanvasDocument(parseCanvasDocument(saved));
           defaultCompoundLoaded.current = true;
           setLocalCanvasReady(true);
           return;
+        }
+        if (saved && urlSmiles) {
+          try {
+            localStorage.removeItem(localCanvasKey);
+          } catch {}
         }
       } catch {
         try {
           localStorage.removeItem(localCanvasKey);
         } catch {}
       }
-      await spawnFormulaRef.current("fentanyl");
+      if (urlSmiles) {
+        await spawnFormulaRef.current(urlSmiles);
+      } else {
+        await spawnFormulaRef.current("fentanyl");
+      }
       if (current) {
         defaultCompoundLoaded.current = true;
         setLocalCanvasReady(true);
@@ -1782,6 +1794,46 @@ export default function Home() {
     }
   }
 
+  async function copyShareUrl() {
+    const group = formulaGroups.find((g) => g.id === selectedMolecule);
+    if (!group) {
+      setValidationNotice("Select a molecule first.");
+      return;
+    }
+    const groupAtomIds = new Set(group.atomIds);
+    const groupAtoms = atoms.filter((atom) => groupAtomIds.has(atom.id));
+    const groupBonds = bonds.filter(
+      (bond) => groupAtomIds.has(bond.from) && groupAtomIds.has(bond.to),
+    );
+    const validation = await validateStructure(
+      groupAtoms.map((atom) => ({
+        id: atom.id,
+        element: atom.element,
+        x: atom.x,
+        y: atom.y,
+        charge: atom.charge,
+      })),
+      groupBonds.map((bond) => ({
+        from: bond.from,
+        to: bond.to,
+        type: bond.type,
+        order: bond.order,
+      })),
+    );
+    if (!validation.valid || !validation.canonicalSmiles) {
+      setValidationNotice("Could not generate a share link for this structure.");
+      return;
+    }
+    const url = new URL(window.location.href);
+    url.searchParams.set("smiles", validation.canonicalSmiles);
+    try {
+      await navigator.clipboard.writeText(url.toString());
+      setValidationNotice("Molecule link copied to clipboard!");
+    } catch {
+      setValidationNotice("Could not copy the link to clipboard.");
+    }
+  }
+
   async function importCanvasFile(file: File) {
     try {
       const document = parseCanvasDocument(await file.text());
@@ -2677,6 +2729,15 @@ export default function Home() {
                 }}
               >
                 <MagnifyingGlass /> Add molecule
+              </button>
+              <button
+                type="button"
+                className="share-molecule toolbar-action"
+                title="Copy molecule link"
+                onClick={copyShareUrl}
+                disabled={!selectedMolecule}
+              >
+                <Link /> Copy link
               </button>
               <button
                 type="button"

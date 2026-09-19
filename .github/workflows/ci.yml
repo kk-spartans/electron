@@ -9,7 +9,6 @@ on:
 permissions:
   contents: read
   packages: write
-  pages: write
   id-token: write
 
 jobs:
@@ -41,19 +40,14 @@ jobs:
           nix profile add nixpkgs#devenv
           devenv tasks run electron:check
 
-      - name: Configure GitHub Pages
+      - name: Deploy to Cloudflare Pages
         if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-        uses: actions/configure-pages@v5
-
-      - name: Upload GitHub Pages artifact
-        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-        uses: actions/upload-pages-artifact@v3
-        with:
-          path: ./out
-
-      - name: Deploy to GitHub Pages
-        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-        uses: actions/deploy-pages@v4
+        run: |
+          nix profile add nixpkgs#wrangler
+          wrangler pages project create electron --production-branch main || true
+          wrangler pages deployment create --project-name electron ./out
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
 
   docker:
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'

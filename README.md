@@ -4,7 +4,7 @@ Simulator for bonds and atoms and alike. I'm not a chemist, not even in the slig
 
 The code here is messy, I didn't read it. It was supposed to be just a fun expirement.
 
-Try it out [here](https://electron.pages.dev).
+Try it out [here](https://electron-app.pages.dev).
 
 ## Included in the static index
 

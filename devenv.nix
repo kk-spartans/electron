@@ -32,6 +32,7 @@ in
     docker-compose
     jq
     wrangler
+    gh
   ];
 
   languages = {

@@ -1,0 +1,84 @@
+name: PR Preview
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, closed]
+
+permissions:
+  contents: read
+  packages: write
+  id-token: write
+  pull-requests: write
+
+jobs:
+  preview:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - uses: cachix/install-nix-action@v31
+      - uses: cachix/cachix-action@v16
+        with:
+          name: devenv
+
+      - name: Restore reaction data
+        uses: actions/cache@v5
+        with:
+          path: |
+            .cache/ord
+            public/reactions
+          key: reactions-${{ runner.os }}-${{ hashFiles('devops/snapshots/*.txt', 'devops/scripts/build-reaction-index.ts', 'devops/scripts/ord-index-worker.ts') }}
+          restore-keys: |
+            reactions-${{ runner.os }}-
+
+      - name: Build app
+        run: |
+          nix profile add nixpkgs#devenv
+          devenv tasks run electron:check
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push Docker image
+        run: |
+          nix build .#docker --print-build-logs
+          docker load < result
+          TAG="pr-${{ github.event.number }}-${GITHUB_SHA:0:7}"
+          IMAGE="ghcr.io/${{ github.repository }}/electron-app:${TAG}"
+          docker tag electron-app:latest "$IMAGE"
+          docker push "$IMAGE"
+
+      - name: Deploy preview to Cloudflare Pages
+        if: github.event.action != 'closed'
+        run: |
+          nix profile add nixpkgs#wrangler
+          wrangler pages project create electron-pr-${{ github.event.number }} || true
+          wrangler pages deployment create --project-name electron-pr-${{ github.event.number }} ./out
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+
+      - name: Comment preview URL on PR
+        if: github.event.action != 'closed'
+        run: |
+          nix profile add nixpkgs#gh
+          gh pr comment ${{ github.event.number }} --body "Cloudflare Pages preview: https://electron-pr-${{ github.event.number }}.pages.dev"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Delete preview on PR close
+        if: github.event.action == 'closed'
+        run: |
+          nix profile add nixpkgs#wrangler
+          wrangler pages project delete electron-pr-${{ github.event.number }} --force || true
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}

@@ -512,6 +512,23 @@ select:focus-visible {
   border-color: var(--accent);
   background: #313244;
 }
+.bond-toolbar .share-molecule {
+  position: relative;
+  min-width: 0;
+  justify-content: center;
+  border: 1px solid var(--line);
+  background: #181825;
+  color: var(--text);
+  white-space: nowrap;
+}
+.bond-toolbar .share-molecule:hover:not(:disabled) {
+  border-color: var(--accent);
+  background: #313244;
+}
+.bond-toolbar .share-molecule:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
 .reaction-prompt {
   position: absolute;
   z-index: 12;

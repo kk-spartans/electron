@@ -1810,7 +1810,7 @@ export default function Home() {
         queryTokens.map((match) => match[0]).join("") === compact &&
         queryTokens.every((match) => match[1] in elements);
     if (!query) {
-      setFormulaError("Enter a formula, compound name, PubChem CID, or prefixed SMILES.");
+      setFormulaError("Enter a formula, compound name, PubChem CID, or SMILES.");
       return;
     }
     if (isFormula) {
@@ -3747,7 +3747,7 @@ export default function Home() {
                 <label>
                   <input
                     autoFocus
-                    aria-label="PubChem structure name or formula"
+                    aria-label="PubChem structure name, formula, CID, or SMILES"
                     value={formulaInput}
                     onChange={(event) => {
                       setFormulaInput(event.target.value);
@@ -3757,7 +3757,7 @@ export default function Home() {
                     spellCheck={false}
                     autoComplete="off"
                     disabled={formulaLoading}
-                    placeholder="Formula, name, CID, or smiles:…"
+                    placeholder="Formula, name, CID, or SMILES"
                   />
                 </label>
                 {formulaError && formulaCandidates.length === 0 && <output>{formulaError}</output>}

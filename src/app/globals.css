@@ -1350,6 +1350,37 @@ select:focus-visible {
   padding: 9px;
   border-radius: 7px;
 }
+.charge-controls {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.charge-controls button {
+  min-height: 30px;
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--surface-2);
+  color: var(--text);
+  font-size: 11px;
+  cursor: pointer;
+}
+.charge-controls button:hover {
+  border-color: var(--accent);
+}
+.charge-controls button.toggled,
+.bond-toolbar button.toggled {
+  border-color: var(--accent);
+  background: #313244;
+  color: var(--accent);
+}
+.charge-controls output {
+  min-width: 76px;
+  text-align: center;
+  font: 700 12px var(--font-geist-mono);
+  color: var(--text);
+}
 .electron-demo > div {
   display: grid;
   grid-template-columns: 1fr auto 1fr;

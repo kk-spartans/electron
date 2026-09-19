@@ -3,16 +3,18 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowCounterClockwise,
-  ArrowsIn,
-  ArrowsOut,
   Atom,
   FloppyDisk,
   MagnifyingGlass,
   Trash,
   X,
 } from "@phosphor-icons/react";
-import AtomScene, { Subshell, subshellColors } from "@/components/AtomScene";
-import periodicTable from "@exabyte-io/periodic-table.js/periodic-table.json";
+import AtomScene from "@/components/AtomScene";
+import {
+  subshellsForElectronCount as sharedSubshellsForElectronCount,
+  subshellColors,
+} from "@/lib/subshells";
+import { elements, metals, nobleGases, pauling as sharedPauling } from "@/lib/chemistry";
 import { loadRDKit, validateStructure } from "@/lib/rdkit";
 import {
   lookupStructure,
@@ -21,6 +23,14 @@ import {
   type StructureResult,
 } from "@/lib/pubchem";
 import { lookupReportedReactions } from "@/lib/reactions";
+import AtomLearning from "@/components/AtomLearning";
+import BondInspector from "@/components/BondInspector";
+import MoleculeInspector from "@/components/MoleculeInspector";
+import ElementPlacement from "@/components/ElementPlacement";
+
+// Re-export for backward compatibility within this module
+const subshellsForElectronCount = sharedSubshellsForElectronCount;
+const pauling = sharedPauling;
 
 type ElementKey = string;
 type AtomNode = {
@@ -223,80 +233,6 @@ async function writeAutosavedCanvas(contents: string) {
   }
 }
 
-type ElementData = {
-  name: string;
-  z: number;
-  shells: number[];
-  config: string;
-  valence: number;
-  subshells: Subshell[];
-  note: string;
-};
-
-const allSymbols =
-  "H He Li Be B C N O F Ne Na Mg Al Si P S Cl Ar K Ca Sc Ti V Cr Mn Fe Co Ni Cu Zn Ga Ge As Se Br Kr Rb Sr Y Zr Nb Mo Tc Ru Rh Pd Ag Cd In Sn Sb Te I Xe Cs Ba La Ce Pr Nd Pm Sm Eu Gd Tb Dy Ho Er Tm Yb Lu Hf Ta W Re Os Ir Pt Au Hg Tl Pb Bi Po At Rn Fr Ra Ac Th Pa U Np Pu Am Cm Bk Cf Es Fm Md No Lr Rf Db Sg Bh Hs Mt Ds Rg Cn Nh Fl Mc Lv Ts Og".split(
-    " ",
-  );
-const filling: Array<[string, number, number, "s" | "p" | "d" | "f"]> = [
-  ["1s", 1, 2, "s"],
-  ["2s", 2, 2, "s"],
-  ["2p", 2, 6, "p"],
-  ["3s", 3, 2, "s"],
-  ["3p", 3, 6, "p"],
-  ["4s", 4, 2, "s"],
-  ["3d", 3, 10, "d"],
-  ["4p", 4, 6, "p"],
-  ["5s", 5, 2, "s"],
-  ["4d", 4, 10, "d"],
-  ["5p", 5, 6, "p"],
-  ["6s", 6, 2, "s"],
-  ["4f", 4, 14, "f"],
-  ["5d", 5, 10, "d"],
-  ["6p", 6, 6, "p"],
-  ["7s", 7, 2, "s"],
-  ["5f", 5, 14, "f"],
-  ["6d", 6, 10, "d"],
-  ["7p", 7, 6, "p"],
-];
-function generatedElement(symbol: string, z: number): ElementData {
-  let remaining = z;
-  const subshells: Subshell[] = [];
-  for (const [label, shell, capacity, kind] of filling) {
-    if (!remaining) break;
-    const count = Math.min(capacity, remaining);
-    subshells.push({ label, shell, count, kind });
-    remaining -= count;
-  }
-  const highest = Math.max(...subshells.map((item) => item.shell));
-  const shells = Array.from({ length: highest }, (_, index) =>
-    subshells.filter((item) => item.shell === index + 1).reduce((sum, item) => sum + item.count, 0),
-  );
-  const valence = shells.at(-1) ?? 0;
-  const reference = (
-    periodicTable as Record<string, { name: string; electronic_configuration: string }>
-  )[symbol];
-  return {
-    name: reference.name,
-    z,
-    shells,
-    valence,
-    subshells,
-    config: reference.electronic_configuration,
-    note:
-      reference.name +
-      " is shown using its ground-state filling order. Bonding behavior depends on its outer electrons.",
-  };
-}
-const elements: Record<string, ElementData> = Object.fromEntries(
-  allSymbols.map((symbol, index) => [symbol, generatedElement(symbol, index + 1)]),
-);
-const metals = new Set(
-  "Li Be Na Mg Al K Ca Sc Ti V Cr Mn Fe Co Ni Cu Zn Ga Rb Sr Y Zr Nb Mo Tc Ru Rh Pd Ag Cd In Sn Cs Ba La Ce Pr Nd Pm Sm Eu Gd Tb Dy Ho Er Tm Yb Lu Hf Ta W Re Os Ir Pt Au Hg Tl Pb Bi Fr Ra Ac Th Pa U Np Pu Am Cm Bk Cf Es Fm Md No Lr Rf Db Sg Bh Hs Mt Ds Rg Cn Nh Fl Mc Lv".split(
-    " ",
-  ),
-);
-const nobleGases = new Set(["He", "Ne", "Ar", "Kr", "Xe", "Rn", "Og"]);
-
 function ionicDonationLimit(symbol: string) {
   if (["Li", "Na", "K", "Rb", "Cs", "Fr"].includes(symbol)) return 1;
   if (["Be", "Mg", "Ca", "Sr", "Ba", "Ra"].includes(symbol)) return 2;
@@ -340,23 +276,11 @@ function applyIonicCharges(atomList: AtomNode[], bondList: BondEdge[]) {
   return atomList.map((atom) => ({ ...atom, charge: charges.get(atom.id) ?? 0 }));
 }
 
-const electronSubshellCache = new Map<number, Subshell[]>();
 
-function subshellsForElectronCount(count: number) {
-  const cached = electronSubshellCache.get(count);
-  if (cached) return cached;
-  let remaining = Math.max(0, count);
-  const result: Subshell[] = [];
-  for (const [label, shell, capacity, kind] of filling) {
-    if (!remaining) break;
-    const occupied = Math.min(capacity, remaining);
-    result.push({ label, shell, count: occupied, kind });
-    remaining -= occupied;
-  }
-  electronSubshellCache.set(count, result);
-  return result;
-}
-
+const allSymbols =
+  "H He Li Be B C N O F Ne Na Mg Al Si P S Cl Ar K Ca Sc Ti V Cr Mn Fe Co Ni Cu Zn Ga Ge As Se Br Kr Rb Sr Y Zr Nb Mo Tc Ru Rh Pd Ag Cd In Sn Sb Te I Xe Cs Ba La Ce Pr Nd Pm Sm Eu Gd Tb Dy Ho Er Tm Yb Lu Hf Ta W Re Os Ir Pt Au Hg Tl Pb Bi Po At Rn Fr Ra Ac Th Pa U Np Pu Am Cm Bk Cf Es Fm Md No Lr Rf Db Sg Bh Hs Mt Ds Rg Cn Nh Fl Mc Lv Ts Og".split(
+    " ",
+  );
 const periodicMain: Array<Array<[string, number]>> = [
   [
     ["H", 1],
@@ -2411,12 +2335,12 @@ export default function Home() {
           </div>
           <div className="boot-copy">
             <strong>
-              {boot.error ? "Chemistry engine unavailable" : "Preparing the chemistry engine"}
+              {boot.error ? "Chemistry engine unavailable" : "Loading chemistry engine"}
             </strong>
             <span>
               {boot.error
                 ? "Check the site files and reload."
-                : "Downloading RDKit for local structure validation…"}
+                : "Downloading structure validation library…"}
             </span>
           </div>
           {!boot.error ? (
@@ -3361,8 +3285,8 @@ export default function Home() {
             {atoms.length === 0 && (
               <div className="canvas-empty">
                 <Atom />
-                <b>Place your first atom</b>
-                <span>Choose an element from the tray or drag it here.</span>
+                <b>Start building</b>
+                <span>Pick an element from the tray or search by name to place it on the canvas.</span>
               </div>
             )}
           </section>
@@ -3797,270 +3721,6 @@ export default function Home() {
   );
 }
 
-function MoleculeInspector({
-  group,
-  atoms,
-  bonds,
-  onClose,
-  onDelete,
-  compressed,
-  onToggleCompressed,
-}: {
-  group: FormulaGroup;
-  atoms: AtomNode[];
-  bonds: BondEdge[];
-  onClose: () => void;
-  onDelete: () => void;
-  compressed: boolean;
-  onToggleCompressed: () => void;
-}) {
-  const memberIds = new Set(group.atomIds);
-  const members = atoms.filter((atom) => memberIds.has(atom.id));
-  const moleculeBonds = bonds.filter((bond) => memberIds.has(bond.from) && memberIds.has(bond.to));
-  const counts = members.reduce<Record<string, number>>((result, atom) => {
-    result[atom.element] = (result[atom.element] ?? 0) + 1;
-    return result;
-  }, {});
-  const totalCharge = members.reduce((sum, atom) => sum + atom.charge, 0);
-  const covalent = moleculeBonds.filter((bond) => bond.type === "covalent");
-  const ionic = moleculeBonds.filter((bond) => bond.type === "ionic");
-  const polar = covalent.filter((bond) => {
-    const from = atoms.find((atom) => atom.id === bond.from),
-      to = atoms.find((atom) => atom.id === bond.to);
-    return Boolean(from && to && Math.abs(pauling(from.element) - pauling(to.element)) >= 0.4);
-  }).length;
-  return (
-    <div className="molecule-inspector">
-      <div className="inspector-title">
-        <div>
-          <small>Selected molecule</small>
-          <h1>{group.name ?? group.formula}</h1>
-          <code>
-            {group.formula}
-            {group.cid ? ` · PubChem CID ${group.cid}` : ""}
-          </code>
-        </div>
-        <button type="button" aria-label="Deselect molecule" onClick={onClose}>
-          <X />
-        </button>
-      </div>
-      <section>
-        <h2>Composition</h2>
-        <div className="molecule-composition">
-          {Object.entries(counts).map(([symbol, count]) => (
-            <span key={symbol}>
-              <b>{symbol}</b>
-              {count}
-            </span>
-          ))}
-        </div>
-        <p>
-          {members.length} atoms · net charge {totalCharge > 0 ? `+${totalCharge}` : totalCharge}
-        </p>
-      </section>
-      <section>
-        <h2>Structure</h2>
-        <div className="learning-metrics">
-          <div>
-            <b>{moleculeBonds.length}</b>
-            <span>bonds</span>
-          </div>
-          <div>
-            <b>{covalent.length}</b>
-            <span>covalent</span>
-          </div>
-          <div>
-            <b>{polar}</b>
-            <span>polar</span>
-          </div>
-        </div>
-        {ionic.length > 0 && (
-          <p>
-            {ionic.length} ionic interaction{ionic.length === 1 ? " is" : "s are"} shown.
-          </p>
-        )}
-      </section>
-      <section>
-        <h2>Canvas interaction</h2>
-        <p>
-          Drag anywhere in the outlined molecular area to move every atom and bond together.
-          Individual atoms and bonds remain selectable.
-        </p>
-      </section>
-      <button type="button" className="compress-molecule" onClick={onToggleCompressed}>
-        {compressed ? <ArrowsOut /> : <ArrowsIn />}
-        {compressed ? "Expand structure" : "Compress"}
-      </button>
-      <button type="button" className="remove-bond" onClick={onDelete}>
-        <Trash /> Delete molecule
-      </button>
-    </div>
-  );
-}
-
-function BondInspector({
-  bond,
-  atoms,
-  onClose,
-  onRemove,
-}: {
-  bond: BondEdge;
-  atoms: AtomNode[];
-  onClose: () => void;
-  onRemove: () => void;
-}) {
-  const from = atoms.find((atom) => atom.id === bond.from)!;
-  const to = atoms.find((atom) => atom.id === bond.to)!;
-  const fromSubshell = subshellsForElectronCount(
-    elements[from.element].z - from.charge + from.electronOffset,
-  ).at(-1);
-  const toSubshell = subshellsForElectronCount(
-    elements[to.element].z - to.charge + to.electronOffset,
-  ).at(-1);
-  const fromEn = pauling(from.element),
-    toEn = pauling(to.element),
-    difference = Math.abs(fromEn - toEn),
-    moreNegative = fromEn > toEn ? from : to;
-  const donor = metals.has(from.element) ? from : to;
-  const receiver = donor === from ? to : from;
-  const polarity =
-    bond.type === "ionic" ? "ionic" : difference < 0.4 ? "mostly nonpolar" : "polar covalent";
-  return (
-    <div className="bond-inspector">
-      <div className="inspector-title">
-        <div>
-          <small>Selected bond</small>
-          <h1>
-            {from.element} {bond.type === "ionic" ? "→" : "—"} {to.element}
-          </h1>
-          <code>{bond.type} bond</code>
-        </div>
-        <button type="button" aria-label="Close bond details" onClick={onClose}>
-          <X />
-        </button>
-      </div>
-      <section>
-        <h2>Electron behavior</h2>
-        {bond.type === "ionic" ? (
-          <p>
-            <b>{donor.element}</b> donates an outer electron to <b>{receiver.element}</b>. They
-            become oppositely charged ions held by electrostatic attraction.
-          </p>
-        ) : bond.type === "covalent" ? (
-          <>
-            <p>
-              <b>{from.element}</b> contributes {bond.order} electron{bond.order > 1 ? "s" : ""} and{" "}
-              <b>{to.element}</b> contributes {bond.order}. Together they share{" "}
-              <b>{bond.order * 2} electrons</b> in{" "}
-              {bond.order === 1 ? "one pair" : `${bond.order} pairs`}.
-            </p>
-            <div className="bond-contributors">
-              <span>
-                <i style={{ background: subshellColors[fromSubshell?.kind ?? "s"] }} />
-                {from.element}: {fromSubshell?.label}
-              </span>
-              <span>
-                <i style={{ background: subshellColors[toSubshell?.kind ?? "s"] }} />
-                {to.element}: {toSubshell?.label}
-              </span>
-            </div>
-            <small className="sharing-note">
-              The matching ring on each atom marks the electron used here. Every single bond
-              contains one two-electron pair.
-            </small>
-          </>
-        ) : (
-          <p>
-            Valence electrons are delocalized across the metal atoms rather than belonging to one
-            pair.
-          </p>
-        )}
-      </section>
-      <section>
-        <h2>Bond polarity</h2>
-        <div className="polarity-scale">
-          <span>
-            {from.element}
-            <small>{fromEn.toFixed(2)}</small>
-          </span>
-          <i
-            style={
-              { "--polarity": `${Math.min(100, (difference / 2) * 100)}%` } as React.CSSProperties
-            }
-          />
-          <span>
-            {to.element}
-            <small>{toEn.toFixed(2)}</small>
-          </span>
-        </div>
-        <p>
-          ΔEN = <b>{difference.toFixed(2)}</b>: this bond is {polarity}.
-          {difference >= 0.4 && bond.type === "covalent" && (
-            <>
-              {" "}
-              Electron density is pulled toward <b>{moreNegative.element} δ−</b>; the other end is
-              δ+.
-            </>
-          )}
-        </p>
-      </section>
-      <button type="button" className="remove-bond" onClick={onRemove}>
-        <Trash /> Remove bond
-      </button>
-    </div>
-  );
-}
-
-function pauling(symbol: string) {
-  return (
-    Number(
-      (periodicTable as unknown as Record<string, { pauling_negativity?: number | string }>)[symbol]
-        ?.pauling_negativity,
-    ) || 0
-  );
-}
-
-function ElementPlacement({ symbol }: { symbol: string }) {
-  const data = elements[symbol];
-  const mainPosition = periodicMain.flatMap((row, periodIndex) =>
-    row
-      .filter(([candidate]) => candidate === symbol)
-      .map(([, group]) => ({
-        period: periodIndex + 1,
-        group,
-      })),
-  )[0];
-  const fRow = periodicFBlock.findIndex((row) => row.includes(symbol));
-  const period = mainPosition?.period ?? (fRow === 0 ? 6 : 7);
-  const group = mainPosition?.group ?? 3;
-  const last = data.subshells.at(-1);
-  const block = last?.kind ?? "s";
-  const mainGroup = data.z <= 20;
-  const groupReason = mainGroup
-    ? group <= 2
-      ? `${data.valence} outer-shell electron${data.valence === 1 ? "" : "s"} place it in group ${group}.`
-      : `${data.valence} valence electrons map to main-group ${group} (group number = valence + 10).`
-    : block === "d"
-      ? `Its differentiating electron enters a d subshell. For transition metals, the group follows the combined outer s and incomplete (n−1)d electrons, not outer-shell electrons alone.`
-      : block === "f"
-        ? `Its differentiating electron enters an f subshell, placing it in the inner-transition ${period === 6 ? "lanthanide" : "actinide"} series conventionally associated with group 3.`
-        : `Its last-filled ${last?.label} subshell places it in the ${block}-block; the occupied outer ${block} subshell determines its main-group column.`;
-  return (
-    <section className="element-placement">
-      <h2>
-        Why period {period}, group {group}
-      </h2>
-      <p>
-        <b>Period {period}</b> comes from the highest occupied principal shell, n = {period}.{" "}
-        {groupReason}
-      </p>
-      <div className="placement-tags">
-        <span>{block}-block</span>
-        <span>last filled: {last?.label}</span>
-      </div>
-    </section>
-  );
-}
 
 function plainFormula(formula: string) {
   return formula
@@ -4440,175 +4100,4 @@ function reactionRouteKey(recipe: ReactionRecipe) {
     .map((product) => `${product.cid}:${product.coefficient}`)
     .sort()
     .join("|");
-}
-
-function AtomLearning({
-  atom,
-  atoms,
-  bonds,
-}: {
-  atom: AtomNode;
-  atoms: AtomNode[];
-  bonds: BondEdge[];
-}) {
-  const data = elements[atom.element];
-  const connected = bonds.filter((bond) => bond.from === atom.id || bond.to === atom.id);
-  const covalent = connected.filter((bond) => bond.type === "covalent");
-  const bondOrder = covalent.reduce((sum, bond) => sum + bond.order, 0);
-  const ownedValence = Math.max(0, data.valence - atom.charge);
-  const nonbonding = Math.max(0, ownedValence - bondOrder);
-  const lonePairs = Math.floor(nonbonding / 2),
-    unpaired = nonbonding % 2;
-  const formalCharge = atom.charge || data.valence - nonbonding - bondOrder;
-  const neighborCount = new Set(
-    covalent.map((bond) => (bond.from === atom.id ? bond.to : bond.from)),
-  ).size;
-  const domains = neighborCount + lonePairs;
-  let geometry = "No molecular geometry",
-    angle = "—";
-  if (neighborCount === 1) {
-    geometry = "Linear around this bond";
-    angle = "180° axis";
-  } else if (domains === 2) {
-    geometry = "Linear";
-    angle = "180°";
-  } else if (domains === 3) {
-    geometry = lonePairs ? "Bent" : "Trigonal planar";
-    angle = lonePairs ? "less than 120°" : "120°";
-  } else if (domains === 4) {
-    geometry = lonePairs === 0 ? "Tetrahedral" : lonePairs === 1 ? "Trigonal pyramidal" : "Bent";
-    angle = lonePairs === 0 ? "109.5°" : lonePairs === 1 ? "about 107°" : "about 104.5°";
-  } else if (domains === 5) {
-    geometry = "Trigonal bipyramidal electron geometry";
-    angle = "90° and 120°";
-  } else if (domains >= 6) {
-    geometry = "Octahedral electron geometry";
-    angle = "90°";
-  }
-  const ionicShells = subshellsForElectronCount(data.z - atom.charge + atom.electronOffset),
-    outerShell = ionicShells.at(-1)?.shell ?? 1;
-  const ionicOuterCount = ionicShells
-    .filter((subshell) => subshell.shell === outerShell)
-    .reduce((sum, subshell) => sum + subshell.count, 0);
-  const isIonic = atom.charge !== 0 && connected.some((bond) => bond.type === "ionic");
-  const shellCount = isIonic ? ionicOuterCount : ownedValence + bondOrder;
-  const shellTarget =
-    isIonic && outerShell === 1 ? 2 : atom.element === "H" || atom.element === "He" ? 2 : 8;
-  const exception =
-    atom.element === "H" || atom.element === "He"
-      ? "First-shell duet rule"
-      : atom.element === "Be" || atom.element === "B"
-        ? "Stable electron-deficient structures are possible"
-        : shellCount > 8 && elements[atom.element].subshells.some((item) => item.shell >= 3)
-          ? "Expanded valence shell is possible for some period-3-and-beyond compounds"
-          : unpaired
-            ? "An unpaired electron makes this a radical-like arrangement"
-            : null;
-  const permitsNonOctet = Boolean(exception) && unpaired === 0;
-  const stable =
-    connected.length === 0
-      ? {
-          tone: "neutral",
-          title: "Unbonded",
-          text: "Move the atom near compatible partners to test a structure.",
-        }
-      : shellCount === shellTarget || permitsNonOctet
-        ? {
-            tone: "good",
-            title: "Locally satisfied",
-            text: isIonic
-              ? `After electron transfer, shell ${outerShell} is the ion’s outer occupied shell and contains ${shellCount} of ${shellTarget} electrons.`
-              : `The displayed valence shell has ${shellCount} electrons when shared electrons are counted.`,
-          }
-        : shellCount < shellTarget
-          ? {
-              tone: "warn",
-              title: unpaired ? "Radical with incomplete shell" : "Incomplete valence shell",
-              text: `The actual outer occupied shell ${isIonic ? `(shell ${outerShell}) ` : ""}contains ${shellCount} of ${shellTarget} electrons.`,
-            }
-          : {
-              tone: "warn",
-              title: "Check this structure",
-              text: `The actual outer occupied shell contains ${shellCount} electrons, above its usual capacity of ${shellTarget}.`,
-            };
-  const polarBonds = covalent
-    .map((bond) => {
-      const partner = atoms.find(
-        (item) => item.id === (bond.from === atom.id ? bond.to : bond.from),
-      )!;
-      const difference = Math.abs(pauling(atom.element) - pauling(partner.element));
-      return {
-        partner,
-        difference,
-        toward: pauling(atom.element) > pauling(partner.element) ? atom.element : partner.element,
-      };
-    })
-    .filter((item) => item.difference >= 0.4);
-  return (
-    <>
-      <section>
-        <h2>Lewis accounting</h2>
-        <div className="learning-metrics">
-          <div>
-            <b>{lonePairs}</b>
-            <span>lone pair{lonePairs === 1 ? "" : "s"}</span>
-          </div>
-          <div>
-            <b>{unpaired}</b>
-            <span>unpaired</span>
-          </div>
-          <div>
-            <b>{formalCharge > 0 ? `+${formalCharge}` : formalCharge}</b>
-            <span>formal charge</span>
-          </div>
-        </div>
-        <p>
-          Bonding uses {bondOrder} electron{bondOrder === 1 ? "" : "s"} contributed by this atom;{" "}
-          {nonbonding} valence electron{nonbonding === 1 ? " remains" : "s remain"} nonbonding.
-        </p>
-      </section>
-      <section>
-        <h2>Molecular geometry</h2>
-        <div className="geometry-readout">
-          <b>{geometry}</b>
-          <span>{angle}</span>
-        </div>
-        <p>
-          VSEPR estimate from {neighborCount} bonded region{neighborCount === 1 ? "" : "s"} and{" "}
-          {lonePairs} lone pair{lonePairs === 1 ? "" : "s"}. Multiple bonds count as one electron
-          region.
-        </p>
-      </section>
-      <section>
-        <h2>Polarity around this atom</h2>
-        {polarBonds.length ? (
-          <div className="polarity-list">
-            {polarBonds.map(({ partner, difference, toward }) => (
-              <div key={partner.id}>
-                <b>
-                  {atom.element}—{partner.element}
-                </b>
-                <span>
-                  ΔEN {difference.toFixed(2)} · toward {toward} δ−
-                </span>
-              </div>
-            ))}
-          </div>
-        ) : (
-          <p>
-            {covalent.length
-              ? "No strongly polar covalent bond is shown around this atom."
-              : "Create a covalent bond to compare electronegativity."}
-          </p>
-        )}
-      </section>
-      <section>
-        <h2>Stability check</h2>
-        <div className={`stability ${stable.tone}`}>
-          <b>{stable.title}</b>
-          <span>{stable.text}</span>
-        </div>
-      </section>
-    </>
-  );
 }

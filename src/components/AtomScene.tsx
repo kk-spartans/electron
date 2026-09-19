@@ -20,6 +20,7 @@ function AtomScene({
   charge = 0,
   sharedElectrons = 0,
   sharedFrom = [],
+  rotation = 0,
   onElectronSelect,
 }: {
   symbol: string;
@@ -28,6 +29,7 @@ function AtomScene({
   charge?: number;
   sharedElectrons?: number;
   sharedFrom?: Array<{ color: string; label: string; subshell: string }>;
+  rotation?: number;
   onElectronSelect?: (electron: {
     label: string;
     kind: "s" | "p" | "d" | "f";
@@ -56,6 +58,7 @@ function AtomScene({
   const shells = Math.max(...subshells.map((item) => item.shell));
   const center = 100;
   const radii = Array.from({ length: shells }, (_, index) => 29 + index * 18);
+  const rotationRad = ((rotation % 360) * Math.PI) / 180;
   const electrons = adjusted.flatMap((subshell) =>
     Array.from({ length: subshell.count }, (_, index) => ({ ...subshell, index })),
   );
@@ -76,7 +79,8 @@ function AtomScene({
           );
           const displayedShellCount =
             shellElectrons.length + (electron.shell === shells ? sharedFrom.length : 0);
-          const angle = -Math.PI / 2 + (position * Math.PI * 2) / displayedShellCount;
+          const angle =
+            -Math.PI / 2 + rotationRad + (position * Math.PI * 2) / displayedShellCount;
           const radius = radii[electron.shell - 1];
           const x = (center + Math.cos(angle) * radius).toFixed(2);
           const y = (center + Math.sin(angle) * radius).toFixed(2);
@@ -117,6 +121,7 @@ function AtomScene({
           const outerElectrons = electrons.filter((electron) => electron.shell === shells).length;
           const angle =
             -Math.PI / 2 +
+            rotationRad +
             ((outerElectrons + index) * Math.PI * 2) / (outerElectrons + sharedFrom.length);
           const radius = radii[shells - 1];
           const x = (center + Math.cos(angle) * radius).toFixed(2);
@@ -178,6 +183,7 @@ export default memo(AtomScene, (previous, next) => {
     previous.atomicNumber !== next.atomicNumber ||
     previous.charge !== next.charge ||
     (previous.sharedElectrons ?? 0) !== (next.sharedElectrons ?? 0) ||
+    (previous.rotation ?? 0) !== (next.rotation ?? 0) ||
     previous.subshells.length !== next.subshells.length ||
     previousSources.length !== nextSources.length
   )

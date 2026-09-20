@@ -17,6 +17,8 @@ in
     service = {
       env_file = [ "./.env" ];
       environment = {
+        OPENAI_BASE_URL = "\${OPENAI_BASE_URL:-https://api.openai.com/v1}";
+        OPENAI_MODEL = "\${OPENAI_MODEL:-gpt-4o-mini}";
         PORT = "\${ELECTRON_PORT:-8080}";
       };
       ports = [ "\${ELECTRON_PORT:-8080}:8080" ];

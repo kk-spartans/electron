@@ -13,10 +13,11 @@ Pulls the prebuilt image from GHCR, no Nix required:
 ```sh
 mkdir electron && cd electron
 curl -fsSLO https://raw.githubusercontent.com/kk-spartans/electron/main/devops/nix/docker-compose.yml
+curl -fsSLO https://raw.githubusercontent.com/kk-spartans/electron/main/devops/nix/settings.yml
 curl -fsSL -o .env https://raw.githubusercontent.com/kk-spartans/electron/main/.env.example
 ```
 
-Maybe set `ELECTRON_PORT` if you want a different host port.
+Then edit `OPENAI_API_KEY`, `OPENAI_BASE_URL`, and `OPENAI_MODEL`. Maybe set `ELECTRON_PORT` if you want.
 
 Then:
 
@@ -24,15 +25,21 @@ Then:
 docker compose up -d
 ```
 
-The site lives at [http://localhost:8080](http://localhost:8080).
+The site lives at [http://localhost:8080](http://localhost:8080), with AI-predicted reactions enabled.
 
 ### How it works
 
-Cloudflare Pages serves the static export, while the Docker image runs the same static export behind a tiny Bun server (`electron-server`).
+Cloudflare Pages serves the static export (no reactions there), while the Docker image runs the same static export behind a tiny Bun server (`electron-server`) that also listens on `/api/reactions` and `/api/resolve-structure`. When the site can reach those endpoints it offers model-predicted reactions; when it cannot (e.g. on Cloudflare Pages), reactions are unavailable. The server caches model responses on disk (`REACTION_CACHE_DIR`), so repeated requests for the same species never hit the model provider twice.
 
-| Variable        | Description                                | Default |
-| --------------- | ------------------------------------------ | ------- |
-| `ELECTRON_PORT` | Host port mapped to the container's `8080` | `8080`  |
+Alongside the app runs a SearXNG sidecar (configured via `settings.yml`, which enables its JSON API). The model gets a `web_search` tool, and when it wants current or obscure chemistry info it calls it; the server forwards the query to SearXNG, feeds the top results back into the conversation, and lets the model continue — up to five rounds per request.
+
+| Variable             | Description                                 | Default                     |
+| -------------------- | ------------------------------------------- | --------------------------- |
+| `OPENAI_BASE_URL`    | OpenAI-compatible chat completions base URL | `https://api.openai.com/v1` |
+| `OPENAI_API_KEY`     | API key for the provider                    | _(none)_                    |
+| `OPENAI_MODEL`       | Model to use for reaction prediction        | `gpt-4o-mini`               |
+| `ELECTRON_PORT`      | Host port mapped to the container's `8080`  | `8080`                      |
+| `REACTION_CACHE_DIR` | Where the server persists AI response cache | `.cache/ai-reactions`       |
 
 ## Building the image yourself
 

@@ -1,3 +1,10 @@
+## [1.6.13](https://github.com/kk-spartans/electron/compare/v1.6.12...v1.6.13) (2026-09-20)
+
+
+### Bug Fixes
+
+* use nix store cache for preview reactions ([#9](https://github.com/kk-spartans/electron/issues/9)) ([88c89bc](https://github.com/kk-spartans/electron/commit/88c89bcba3d8092aaba187780a1e4837e7794f3c))
+
 ## [1.6.12](https://github.com/kk-spartans/electron/compare/v1.6.11...v1.6.12) (2026-09-20)
 
 

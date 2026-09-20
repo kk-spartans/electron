@@ -37,6 +37,7 @@ jobs:
       - name: Build app
         run: |
           nix profile add nixpkgs#devenv
+          devenv shell bun install
           devenv tasks run electron:check
 
       - name: Set up Docker Buildx

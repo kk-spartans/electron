@@ -4,7 +4,7 @@ Simulator for bonds and atoms and alike. I'm not a chemist, not even in the slig
 
 The code here is messy, I didn't read it. It was supposed to be just a fun expirement.
 
-Try it out [here](https://kk-spartans.github.io/electron).
+Try it out [here](https://electron-app.pages.dev).
 
 ## Included in the static index
 
@@ -38,7 +38,7 @@ The site lives at [http://localhost:8080](http://localhost:8080), with AI-predic
 
 ### How it works
 
-GitHub Pages serves the static export, while the Docker image runs the same static export behind a tiny Bun server (`electron-server`) that also listens on `/api/reactions` and `/api/resolve-structure`. When the site can reach those endpoints it augments the static index with model-predicted reactions; when it cannot (e.g. on GitHub Pages), it falls back to the static index alone. The server caches model responses on disk (`REACTION_CACHE_DIR`), so repeated requests for the same species never hit the model provider twice.
+Cloudflare Pages serves the static export, while the Docker image runs the same static export behind a tiny Bun server (`electron-server`) that also listens on `/api/reactions` and `/api/resolve-structure`. When the site can reach those endpoints it augments the static index with model-predicted reactions; when it cannot (e.g. on Cloudflare Pages), it falls back to the static index alone. The server caches model responses on disk (`REACTION_CACHE_DIR`), so repeated requests for the same species never hit the model provider twice.
 
 Alongside the app runs a SearXNG sidecar (configured via `settings.yml`, which enables its JSON API). The model gets a `web_search` tool, and when it wants current or obscure chemistry info it calls it; the server forwards the query to SearXNG, feeds the top results back into the conversation, and lets the model continue — up to five rounds per request.
 

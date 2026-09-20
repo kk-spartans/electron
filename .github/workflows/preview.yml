@@ -61,7 +61,6 @@ jobs:
       - name: Deploy preview to Cloudflare Pages
         if: github.event.action != 'closed'
         run: |
-          nix profile add nixpkgs#devenv
           devenv shell wrangler pages project create electron-pr-${{ github.event.number }} || true
           devenv shell wrangler pages deployment create --project-name electron-pr-${{ github.event.number }} ./out
         env:
@@ -70,7 +69,6 @@ jobs:
       - name: Comment preview URL on PR
         if: github.event.action != 'closed'
         run: |
-          nix profile add nixpkgs#devenv
           devenv shell gh pr comment ${{ github.event.number }} --body "Cloudflare Pages preview: https://electron-pr-${{ github.event.number }}.pages.dev"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -78,7 +76,6 @@ jobs:
       - name: Delete preview on PR close
         if: github.event.action == 'closed'
         run: |
-          nix profile add nixpkgs#devenv
           devenv shell wrangler pages project delete electron-pr-${{ github.event.number }} --force || true
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}

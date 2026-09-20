@@ -43,7 +43,7 @@ jobs:
       - name: Deploy to Cloudflare Pages
         if: github.ref == 'refs/heads/main' && github.event_name == 'push'
         run: |
-          nix profile add nixpkgs#wrangler
+          nix profile add nixpkgs#devenv
           wrangler pages project create electron-app --production-branch main || true
           wrangler pages deployment create --project-name electron-app ./out
         env:

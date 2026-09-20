@@ -1,3 +1,10 @@
+## [1.6.12](https://github.com/kk-spartans/electron/compare/v1.6.11...v1.6.12) (2026-09-20)
+
+
+### Bug Fixes
+
+* update electron-reactions output hash ([b9e8990](https://github.com/kk-spartans/electron/commit/b9e89909023a82783ab8a697eb98fdafb72d5e9e))
+
 ## [1.6.11](https://github.com/kk-spartans/electron/compare/v1.6.10...v1.6.11) (2026-09-17)
 
 

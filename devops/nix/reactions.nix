@@ -33,7 +33,7 @@ stdenv.mkDerivation {
   buildInputs = [ cacert ];
   outputHashAlgo = "sha256";
   outputHashMode = "recursive";
-  outputHash = "sha256-3R/DAta6S0ChSIDAlKdmXDOQOHBy3AuFw+IFEeWb7aY=";
+  outputHash = "sha256-F0TfH0pkWEytayq5sCW9u51CHJOde+CecvpiKHcgcJ0=";
   buildPhase = ''
     export HOME=$TMPDIR
     export SSL_CERT_FILE=${cacert}/etc/ssl/certs/ca-bundle.crt

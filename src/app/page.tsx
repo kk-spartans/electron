@@ -465,13 +465,12 @@ export default function Home() {
   const [saveFileName, setSaveFileName] = useState("electron-canvas");
   const [sidebarWidths, setSidebarWidths] = useState({ left: 228, right: 336 });
   const [periodicOpen, setPeriodicOpen] = useState(false);
-  const [autoAngle, setAutoAngle] = useState(() => {
+  const [autoAngle, setAutoAngle] = useState(true);
+  useEffect(() => {
     try {
-      return localStorage.getItem("electron:auto-angle") !== "off";
-    } catch {
-      return true;
-    }
-  });
+      if (localStorage.getItem("electron:auto-angle") === "off") setAutoAngle(false);
+    } catch {}
+  }, []);
   const periodicPresence = useAnimatedPresence(periodicOpen);
   const saveDialogPresence = useAnimatedPresence(saveDialogOpen);
   const formulaPresence = useAnimatedPresence(formulaOpen);

@@ -21,7 +21,6 @@ let
         "SSL_CERT_FILE=/etc/ssl/certs/ca-bundle.crt"
         "PATH=/bin"
         "SERVE_DIR=${app}/out"
-        "REACTION_CACHE_DIR=/tmp/electron-ai-reactions"
       ];
       ExposedPorts = {
         "8080/tcp" = { };

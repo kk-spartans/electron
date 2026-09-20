@@ -14,13 +14,7 @@ import {
 import AtomScene, { Subshell, subshellColors } from "@/components/AtomScene";
 import periodicTable from "@exabyte-io/periodic-table.js/periodic-table.json";
 import { loadRDKit, validateStructure } from "@/lib/rdkit";
-import {
-  lookupStructure,
-  type StructureCandidate,
-  type StructureRecord,
-  type StructureResult,
-} from "@/lib/pubchem";
-import { lookupReportedReactions } from "@/lib/reactions";
+import { lookupStructure, type StructureCandidate, type StructureRecord } from "@/lib/pubchem";
 
 type ElementKey = string;
 type AtomNode = {
@@ -42,39 +36,12 @@ type FormulaGroup = {
   cid?: number;
 };
 
-type ReactionRecipe = {
-  reactants: Array<{ formula: string; coefficient: number }>;
-  products: Array<{ formula: string; coefficient: number; cid: number }>;
-  name: string;
-  condition: string;
-};
-
-type MoleculeEntity = {
-  id: number;
-  formula: string;
-  atomIds: number[];
-  x: number;
-  y: number;
-  isCompound: boolean;
-  cid?: number;
-  name?: string;
-};
-
 type RecognizedCompound = {
   signature: string;
   atomIds: number[];
   formula: string;
   name: string;
   cid?: number;
-};
-
-type PreparedReaction = {
-  key: string;
-  recipe: ReactionRecipe;
-  atomIds: number[];
-  originalAtomIds: number[];
-  spawnedAtomIds: number[];
-  center: { x: number; y: number };
 };
 
 type HistorySnapshot = {
@@ -106,14 +73,7 @@ const canvasFileExtension = ".electron";
 const localCanvasKey = "electron:canvas";
 const opfsCanvasFileName = "electron-autosave.electron";
 const canvasNavigationHintKey = "electron:canvas-navigation-hint-seen";
-const reactionChoiceCache = new Map<string, Promise<ReactionRecipe[]>>();
 const structureRecognitionCache = new Map<string, Promise<StructureRecord | undefined>>();
-const aiReactionCache = new Map<string, Promise<ReactionRecipe[]>>();
-let aiReactionApiAvailable: boolean | null = null;
-let aiReactionLastError = "";
-const aiReactionEndpoint = process.env.NEXT_PUBLIC_REACTION_API ?? "/api/reactions";
-const aiStructureEndpoint =
-  process.env.NEXT_PUBLIC_REACTION_API_RESOLVE ?? "/api/resolve-structure";
 
 function sameHistorySnapshot(first: HistorySnapshot, second: HistorySnapshot) {
   return JSON.stringify(first) === JSON.stringify(second);
@@ -467,22 +427,9 @@ export default function Home() {
   const [recognizedCompounds, setRecognizedCompounds] = useState<RecognizedCompound[]>([]);
   const [selectedMolecule, setSelectedMolecule] = useState<number | null>(null);
   const [compressedGroups, setCompressedGroups] = useState<Set<number>>(() => new Set());
-  const [reactionChoices, setReactionChoices] = useState<ReactionRecipe[]>([]);
-  const [reactionSearching, setReactionSearching] = useState(false);
-  const [reactionSearchEmpty, setReactionSearchEmpty] = useState(false);
-  const [reactionAiError, setReactionAiError] = useState("");
   const [ionicElectronTransfers, setIonicElectronTransfers] = useState<
     Array<{ id: number; from: AtomNode; to: AtomNode }>
   >([]);
-  const [reactionCandidate, setReactionCandidate] = useState<{
-    key: string;
-    pairs: Array<{ first: MoleculeEntity; second: MoleculeEntity; distance: number }>;
-  } | null>(null);
-  const reactionPairRef = useRef<{
-    first: MoleculeEntity;
-    second: MoleculeEntity;
-  } | null>(null);
-  const [preparedReaction, setPreparedReaction] = useState<PreparedReaction | null>(null);
   const [validationNotice, setValidationNotice] = useState("");
   const validationNoticePresence = useAnimatedPresence(Boolean(validationNotice), 400);
   const lastValidationNotice = useRef("");
@@ -967,150 +914,6 @@ export default function Home() {
     [moleculeEntities],
   );
 
-  const selectedReactants = useMemo(() => {
-    const selectedIds = new Set(selected);
-    return moleculeEntities.filter(
-      (entity) =>
-        entity.isCompound &&
-        entity.atomIds.length > 0 &&
-        entity.atomIds.every((atomId) => selectedIds.has(atomId)),
-    );
-  }, [moleculeEntities, selected]);
-
-  const selectedReactantPairs = useMemo(() => {
-    const pairs: Array<{
-      first: MoleculeEntity;
-      second: MoleculeEntity;
-      distance: number;
-    }> = [];
-    for (let firstIndex = 0; firstIndex < selectedReactants.length; firstIndex++) {
-      for (
-        let secondIndex = firstIndex + 1;
-        secondIndex < selectedReactants.length;
-        secondIndex++
-      ) {
-        const first = selectedReactants[firstIndex],
-          second = selectedReactants[secondIndex],
-          distance = Math.hypot(first.x - second.x, first.y - second.y);
-        pairs.push({ first, second, distance });
-      }
-    }
-    return pairs.sort((first, second) => first.distance - second.distance);
-  }, [selectedReactants]);
-
-  const reactionContextEntities = useMemo(
-    () =>
-      reactionPairRef.current
-        ? [reactionPairRef.current.first, reactionPairRef.current.second]
-        : reactionCandidate?.pairs[0]
-          ? [reactionCandidate.pairs[0].first, reactionCandidate.pairs[0].second]
-          : selectedReactants,
-    [reactionCandidate, selectedReactants],
-  );
-
-  const reactionMenuPosition = useMemo(() => {
-    if (!reactionContextEntities.length) return undefined;
-    const x =
-      reactionContextEntities.reduce((sum, reactant) => sum + reactant.x, 0) /
-      reactionContextEntities.length;
-    const y = Math.max(...reactionContextEntities.map((reactant) => reactant.y));
-    return {
-      left: pan.x + x * scale,
-      top: pan.y + (y + 125) * scale + 104,
-    };
-  }, [pan.x, pan.y, reactionContextEntities, scale]);
-
-  const selectedReactantNames = reactionContextEntities
-    .map((reactant) => reactant.name || reactant.formula)
-    .join(" + ");
-
-  useEffect(() => {
-    if (!selectedReactantPairs.length || preparedReaction) return;
-    const key = selectedReactantPairs
-      .map((pair) =>
-        [pair.first.cid ?? pair.first.formula, pair.second.cid ?? pair.second.formula]
-          .map(String)
-          .sort()
-          .join("|"),
-      )
-      .join(",");
-    setReactionCandidate((current) =>
-      current?.key === key ? current : { key, pairs: selectedReactantPairs },
-    );
-  }, [selectedReactantPairs, preparedReaction]);
-
-  useEffect(() => {
-    if (!reactionCandidate || preparedReaction) return;
-    const selectedIds = new Set(selected);
-    const originalReactantIds = new Set(
-      reactionCandidate.pairs.flatMap((pair) => [...pair.first.atomIds, ...pair.second.atomIds]),
-    );
-    if ([...originalReactantIds].every((atomId) => selectedIds.has(atomId))) return;
-    reactionPairRef.current = null;
-    setReactionCandidate(null);
-    setReactionChoices([]);
-    setReactionSearching(false);
-    setReactionSearchEmpty(false);
-  }, [preparedReaction, reactionCandidate, selected]);
-
-  const reactionSourceAtomIds = new Set(preparedReaction?.atomIds ?? []);
-
-  useEffect(() => {
-    let current = true;
-    setReactionChoices([]);
-    setReactionSearchEmpty(false);
-    setReactionAiError("");
-    reactionPairRef.current = null;
-    setReactionSearching(Boolean(reactionCandidate) && !preparedReaction);
-    if (!reactionCandidate || preparedReaction) return;
-    const discover = async () => {
-      for (const pair of reactionCandidate.pairs) {
-        const key = [pair.first.cid ?? pair.first.formula, pair.second.cid ?? pair.second.formula]
-          .map(String)
-          .sort()
-          .join("|");
-        let pending = reactionChoiceCache.get(key);
-        if (!pending) {
-          pending = discoverReactionChoices(pair.first, pair.second);
-          reactionChoiceCache.set(key, pending);
-        }
-        let routes: ReactionRecipe[] = [];
-        try {
-          routes = await pending;
-        } catch (error) {
-          aiReactionLastError =
-            error instanceof Error
-              ? `The structure lookup failed: ${error.message}`
-              : "The structure lookup failed.";
-          reactionChoiceCache.delete(key);
-        }
-        if (!current) return;
-        const knownProducts = [
-          ...new Set(routes.flatMap((route) => route.products.map((product) => product.formula))),
-        ];
-        if (!current) return;
-        const aiRoutes = await discoverAIAssistedReactions(pair.first, pair.second, knownProducts);
-        if (!current) return;
-        const merged = mergeReactionRoutes([...aiRoutes, ...routes]);
-        if (merged.length) {
-          reactionPairRef.current = pair;
-          setReactionChoices(merged);
-          setReactionSearching(false);
-          return;
-        }
-      }
-      if (current) {
-        setReactionSearching(false);
-        setReactionSearchEmpty(true);
-        if (aiReactionLastError) setReactionAiError(aiReactionLastError);
-      }
-    };
-    void discover();
-    return () => {
-      current = false;
-    };
-  }, [reactionCandidate, preparedReaction]);
-
   const compressedAtomIds = useMemo(
     () =>
       new Set(
@@ -1288,11 +1091,6 @@ export default function Home() {
     setSelectedBond(null);
     setSelectedMolecule(null);
     setSelectedElectron(null);
-    setPreparedReaction(null);
-    setReactionCandidate(null);
-    setReactionChoices([]);
-    setReactionSearching(false);
-    setReactionSearchEmpty(false);
     nextId.current = Math.max(0, ...restored.atoms.map((atom) => atom.id)) + 1;
   }
 
@@ -1507,12 +1305,6 @@ export default function Home() {
 
   function deleteAtoms(ids: number[]) {
     const removed = new Set(ids);
-    reactionPairRef.current = null;
-    setPreparedReaction(null);
-    setReactionCandidate(null);
-    setReactionChoices([]);
-    setReactionSearching(false);
-    setReactionSearchEmpty(false);
     const remainingBonds = bondsRef.current.filter(
       (bond) => !removed.has(bond.from) && !removed.has(bond.to),
     );
@@ -1530,138 +1322,6 @@ export default function Home() {
     setFormulaGroups((groups) =>
       groups.filter((group) => !group.atomIds.some((id) => removed.has(id))),
     );
-  }
-
-  function cloneEntity(entity: MoleculeEntity, copyIndex: number) {
-    const sourceIds = new Set(entity.atomIds);
-    const sourceAtoms = atomsRef.current.filter((atom) => sourceIds.has(atom.id));
-    const idMap = new Map<number, number>();
-    const angle = copyIndex * 2.4;
-    const offset = { x: Math.cos(angle) * 270, y: Math.sin(angle) * 270 };
-    const createdAtoms = sourceAtoms.map((atom) => {
-      const id = nextId.current++;
-      idMap.set(atom.id, id);
-      return { ...atom, id, x: atom.x + offset.x, y: atom.y + offset.y };
-    });
-    const createdBonds = bondsRef.current
-      .filter((bond) => sourceIds.has(bond.from) && sourceIds.has(bond.to))
-      .map((bond, index) => ({
-        ...bond,
-        id: Date.now() + copyIndex * 100 + index,
-        from: idMap.get(bond.from)!,
-        to: idMap.get(bond.to)!,
-      }));
-    atomsRef.current = [...atomsRef.current, ...createdAtoms];
-    bondsRef.current = [...bondsRef.current, ...createdBonds];
-    setAtoms(atomsRef.current);
-    setBonds(bondsRef.current);
-    const sourceGroup = formulaGroups.find((group) => group.id === entity.id);
-    if (sourceGroup) {
-      const copyGroup: FormulaGroup = {
-        ...sourceGroup,
-        id: Date.now() + copyIndex * 1000,
-        atomIds: createdAtoms.map((atom) => atom.id),
-        source: "balanced copy",
-      };
-      setFormulaGroups((groups) => [...groups, copyGroup]);
-    }
-    return createdAtoms.map((atom) => atom.id);
-  }
-
-  function prepareReaction(recipe: ReactionRecipe) {
-    const reactionPair = reactionPairRef.current;
-    if (!reactionPair) return;
-    const entities = [reactionPair.first, reactionPair.second];
-    const liveAtomIds = new Set(atomsRef.current.map((atom) => atom.id));
-    if (entities.some((entity) => entity.atomIds.some((atomId) => !liveAtomIds.has(atomId)))) {
-      reactionPairRef.current = null;
-      setReactionCandidate(null);
-      setReactionChoices([]);
-      setReactionSearching(false);
-      setReactionSearchEmpty(false);
-      return;
-    }
-    const originalAtomIds = entities.flatMap((entity) => entity.atomIds);
-    const spawnedAtomIds: number[] = [];
-    let copyIndex = 1;
-    const pendingEntities = [...entities];
-    const matchedEntities = recipe.reactants.map((reactant) => {
-      const wanted = plainFormula(reactant.formula);
-      const index = pendingEntities.findIndex(
-        (candidate) =>
-          candidate.formula === reactant.formula || plainFormula(candidate.formula) === wanted,
-      );
-      if (index < 0) return undefined;
-      return pendingEntities.splice(index, 1)[0];
-    });
-    matchedEntities.forEach((entity, index) => {
-      if (!entity && pendingEntities.length) entity = pendingEntities.shift();
-      if (!entity) return;
-      for (let copy = 1; copy < recipe.reactants[index].coefficient; copy++)
-        spawnedAtomIds.push(...cloneEntity(entity, copyIndex++));
-    });
-    const atomIds = [...originalAtomIds, ...spawnedAtomIds];
-    const center = {
-      x: (reactionPair.first.x + reactionPair.second.x) / 2,
-      y: (reactionPair.first.y + reactionPair.second.y) / 2,
-    };
-    const prepared = {
-      key: reactionEquation(recipe),
-      recipe,
-      atomIds,
-      originalAtomIds,
-      spawnedAtomIds,
-      center,
-    };
-    setPreparedReaction(prepared);
-    setSelected(atomIds);
-    return prepared;
-  }
-
-  function cancelPreparedReaction() {
-    if (!preparedReaction) return;
-    const removed = new Set(preparedReaction.spawnedAtomIds);
-    if (removed.size) {
-      const remainingBonds = bondsRef.current.filter(
-        (bond) => !removed.has(bond.from) && !removed.has(bond.to),
-      );
-      const remainingAtoms = applyIonicCharges(
-        atomsRef.current.filter((atom) => !removed.has(atom.id)),
-        remainingBonds,
-      );
-      bondsRef.current = remainingBonds;
-      atomsRef.current = remainingAtoms;
-      formulaGroupsRef.current = formulaGroupsRef.current.filter(
-        (group) => !group.atomIds.some((atomId) => removed.has(atomId)),
-      );
-      setAtoms(remainingAtoms);
-      setBonds(remainingBonds);
-      setFormulaGroups(formulaGroupsRef.current);
-    }
-    setPreparedReaction(null);
-    setSelected(preparedReaction.originalAtomIds);
-  }
-
-  async function runReaction(prepared = preparedReaction) {
-    if (!prepared) return;
-    const { recipe, center, atomIds } = prepared;
-    deleteAtoms(atomIds);
-    setPreparedReaction(null);
-    setReactionCandidate(null);
-    setReactionChoices([]);
-    setReactionSearching(false);
-    setReactionSearchEmpty(false);
-    for (const [productIndex, product] of recipe.products.entries())
-      for (let index = 0; index < product.coefficient; index++)
-        await spawnFormulaRef.current(String(product.cid), {
-          center: {
-            x: center.x + (productIndex * 220 + index * 150),
-            y: center.y + productIndex * 170,
-          },
-          preserveView: true,
-          select: false,
-        });
-    setValidationNotice(`Reacted: ${reactionEquation(recipe)}`);
   }
 
   function toggleCompressed(groupId: number) {
@@ -2688,16 +2348,6 @@ export default function Home() {
                 <FloppyDisk /> Save
               </button>
             </div>
-            {(reactionSearching || reactionSearchEmpty) && (
-              <output className="reaction-status" aria-live="polite">
-                {reactionSearching && <i aria-hidden="true" />}
-                {reactionSearching
-                  ? "Checking reactions"
-                  : reactionAiError
-                    ? `No reported reaction · ${reactionAiError}`
-                    : "No reported reaction"}
-              </output>
-            )}
             {selectionBox && (
               <div
                 className="selection-marquee"
@@ -2731,64 +2381,6 @@ export default function Home() {
             <output className="zoom-percentage" aria-label="Canvas zoom">
               {Math.round(scale * 100)}%
             </output>
-            {(preparedReaction || reactionChoices.length > 0) && (
-              <div
-                className="reaction-prompt"
-                style={reactionMenuPosition}
-                onPointerDown={(event) => event.stopPropagation()}
-              >
-                {!preparedReaction && (
-                  <header>
-                    <small>Possible reactions</small>
-                    <strong>Choose a reaction for {selectedReactantNames}.</strong>
-                  </header>
-                )}
-                <div className="reaction-options">
-                  {(preparedReaction ? [preparedReaction.recipe] : reactionChoices).map(
-                    (recipe) => (
-                      <article key={reactionRouteKey(recipe)}>
-                        <span>
-                          <b>{reactionEquation(recipe)}</b>
-                          <em>{recipe.name}</em>
-                          <small>{recipe.condition}</small>
-                        </span>
-                        <div className="reaction-actions">
-                          <button
-                            type="button"
-                            onClick={() => {
-                              if (preparedReaction) {
-                                void runReaction();
-                                return;
-                              }
-                              const prepared = prepareReaction(recipe);
-                              if (
-                                prepared &&
-                                recipe.reactants.every((reactant) => reactant.coefficient === 1)
-                              )
-                                void runReaction(prepared);
-                            }}
-                          >
-                            {preparedReaction ||
-                            recipe.reactants.every((reactant) => reactant.coefficient === 1)
-                              ? "React"
-                              : "Balance"}
-                          </button>
-                          {preparedReaction && (
-                            <button
-                              type="button"
-                              className="reaction-cancel"
-                              onClick={cancelPreparedReaction}
-                            >
-                              Cancel
-                            </button>
-                          )}
-                        </div>
-                      </article>
-                    ),
-                  )}
-                </div>
-              </div>
-            )}
             <div
               className="canvas-world"
               style={{ transform: `translate3d(${pan.x}px, ${pan.y}px, 0)` }}
@@ -3089,14 +2681,7 @@ export default function Home() {
                   return (
                     <button
                       type="button"
-                      className={`compressed-compound${selectedMolecule === group.id ? " selected" : ""}${
-                        group.atomIds.some(
-                          (atomId) =>
-                            reactionSourceAtomIds.has(atomId) && !selectedAtomIds.has(atomId),
-                        )
-                          ? " reaction-source"
-                          : ""
-                      }`}
+                      className={`compressed-compound${selectedMolecule === group.id ? " selected" : ""}`}
                       key={`compressed-${group.id}`}
                       style={{
                         transform: `translate(${x * scale}px,${y * scale}px) translate(-50%,-50%) scale(${scale})`,
@@ -3144,9 +2729,7 @@ export default function Home() {
                     <div
                       role="button"
                       tabIndex={0}
-                      className={`canvas-atom ${isSelected ? "selected" : ""}${
-                        reactionSourceAtomIds.has(atom.id) && !isSelected ? " reaction-source" : ""
-                      }`}
+                      className={`canvas-atom ${isSelected ? "selected" : ""}`}
                       style={{
                         width: atomSize,
                         height: atomSize,
@@ -4076,370 +3659,6 @@ function formulaCounts(formula: string) {
     },
     {},
   );
-}
-
-function connectedStructure(record: StructureRecord) {
-  if (record.atoms.length <= 1) return true;
-  const adjacency = new Map<number, number[]>();
-  record.bonds.forEach((bond) => {
-    adjacency.set(bond.from, [...(adjacency.get(bond.from) ?? []), bond.to]);
-    adjacency.set(bond.to, [...(adjacency.get(bond.to) ?? []), bond.from]);
-  });
-  const visited = new Set<number>();
-  const stack = [record.atoms[0].aid];
-  while (stack.length) {
-    const aid = stack.pop()!;
-    if (visited.has(aid)) continue;
-    visited.add(aid);
-    (adjacency.get(aid) ?? []).forEach((next) => stack.push(next));
-  }
-  return visited.size === record.atoms.length;
-}
-
-function usableReactionProduct(record: StructureRecord) {
-  if (connectedStructure(record)) return true;
-  const symbols = record.atoms.map((atom) => allSymbols[atom.atomicNumber - 1]);
-  return symbols.some((first, firstIndex) =>
-    symbols.some(
-      (second, secondIndex) => secondIndex > firstIndex && metals.has(first) !== metals.has(second),
-    ),
-  );
-}
-
-async function lookupAIReactionProduct(
-  formula: string,
-  context: {
-    reactants: Array<{ formula: string; name?: string }>;
-    reactionName?: string;
-    condition?: string;
-  },
-): Promise<StructureResult> {
-  const result = await lookupStructure(formula);
-  if (result.record || !result.candidates?.length) return result;
-  try {
-    const response = await fetch(aiStructureEndpoint, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ formula, candidates: result.candidates, ...context }),
-      signal: AbortSignal.timeout(320_000),
-    });
-    if (!response.ok) return result;
-    const selection = (await response.json()) as { cid?: unknown };
-    const candidate = result.candidates.find(
-      (item) => item.cid === selection.cid && Number.isInteger(selection.cid),
-    );
-    return candidate ? lookupStructure(`cid:${candidate.cid}`) : result;
-  } catch {
-    return result;
-  }
-}
-
-function greatestCommonDivisor(first: number, second: number): number {
-  return second ? greatestCommonDivisor(second, first % second) : Math.abs(first);
-}
-
-function leastCommonMultiple(first: number, second: number) {
-  return Math.abs(first * second) / greatestCommonDivisor(first, second);
-}
-
-function approximateFraction(value: number) {
-  for (let denominator = 1; denominator <= 120; denominator++) {
-    const numerator = Math.round(value * denominator);
-    if (Math.abs(value - numerator / denominator) < 1e-9) return { numerator, denominator };
-  }
-  return null;
-}
-
-function balanceFormulas(
-  reactants: string[],
-  products: string[],
-  reactantCharges = reactants.map(() => 0),
-  productCharges = products.map(() => 0),
-) {
-  const formulas = [...reactants, ...products];
-  if (formulas.length < 3 || products.length > 3) return null;
-  const counts = formulas.map(formulaCounts);
-  const symbols = [...new Set(counts.flatMap((part) => Object.keys(part)))];
-  const charges = [...reactantCharges, ...productCharges];
-  const dimensions = [
-    ...symbols.map((symbol) => counts.map((part) => part[symbol] ?? 0)),
-    ...(charges.some(Boolean) ? [charges] : []),
-  ];
-  const matrix = dimensions.map((dimension) =>
-    dimension.map((count, index) => count * (index < reactants.length ? 1 : -1)),
-  );
-  const pivotColumns: number[] = [];
-  let pivotRow = 0;
-  for (let column = 0; column < formulas.length && pivotRow < matrix.length; column++) {
-    const swapRow = matrix.findIndex(
-      (row, rowIndex) => rowIndex >= pivotRow && Math.abs(row[column]) > 1e-10,
-    );
-    if (swapRow < 0) continue;
-    [matrix[pivotRow], matrix[swapRow]] = [matrix[swapRow], matrix[pivotRow]];
-    const pivot = matrix[pivotRow][column];
-    matrix[pivotRow] = matrix[pivotRow].map((value) => value / pivot);
-    matrix.forEach((row, rowIndex) => {
-      if (rowIndex === pivotRow || Math.abs(row[column]) <= 1e-10) return;
-      const factor = row[column];
-      matrix[rowIndex] = row.map((value, index) => value - factor * matrix[pivotRow][index]);
-    });
-    pivotColumns.push(column);
-    pivotRow++;
-  }
-  const pivotColumnSet = new Set(pivotColumns);
-  const freeColumns = formulas
-    .map((_, index) => index)
-    .filter((column) => !pivotColumnSet.has(column));
-  if (freeColumns.length !== 1) return null;
-  const coefficients = Array<number>(formulas.length).fill(0);
-  coefficients[freeColumns[0]] = 1;
-  for (let row = pivotColumns.length - 1; row >= 0; row--) {
-    const column = pivotColumns[row];
-    coefficients[column] = -matrix[row].reduce(
-      (sum, value, index) => sum + (index === column ? 0 : value * coefficients[index]),
-      0,
-    );
-  }
-  if (coefficients.every((coefficient) => coefficient < -1e-10)) {
-    coefficients.forEach((coefficient, index) => {
-      coefficients[index] = -coefficient;
-    });
-  }
-  if (coefficients.some((coefficient) => coefficient <= 1e-10)) return null;
-  const fractions = coefficients.map(approximateFraction);
-  if (fractions.some((fraction) => !fraction)) return null;
-  const commonDenominator = fractions.reduce(
-    (multiple, fraction) => leastCommonMultiple(multiple, fraction!.denominator),
-    1,
-  );
-  const integers = fractions.map(
-    (fraction) => fraction!.numerator * (commonDenominator / fraction!.denominator),
-  );
-  const commonDivisor = integers.reduce(greatestCommonDivisor);
-  const normalized = integers.map((coefficient) => coefficient / commonDivisor);
-  return {
-    reactants: normalized.slice(0, reactants.length),
-    products: normalized.slice(reactants.length),
-  };
-}
-
-async function mapWithConcurrency<T, R>(
-  items: T[],
-  concurrency: number,
-  task: (item: T) => Promise<R>,
-) {
-  const results = Array<R>(items.length);
-  let nextIndex = 0;
-  const worker = async () => {
-    while (nextIndex < items.length) {
-      const index = nextIndex++;
-      results[index] = await task(items[index]);
-    }
-  };
-  await Promise.all(Array.from({ length: Math.min(concurrency, items.length) }, () => worker()));
-  return results;
-}
-
-async function discoverReactionChoices(first: MoleculeEntity, second: MoleculeEntity) {
-  const resolve = async (entity: MoleculeEntity) => {
-    const result = await lookupStructure(
-      entity.cid ? String(entity.cid) : (entity.name ?? entity.formula),
-    );
-    return result.record;
-  };
-  const [firstRecord, secondRecord] = await Promise.all([resolve(first), resolve(second)]);
-  if (!firstRecord?.inchiKey || !secondRecord?.inchiKey) return [];
-  const reported = await lookupReportedReactions(
-    [firstRecord.inchiKey, secondRecord.inchiKey],
-    [first.formula, second.formula],
-  );
-  const routes: ReactionRecipe[] = [];
-  const seenRoutes = new Set<string>();
-  for (const record of reported) {
-    const resolved = await mapWithConcurrency(record.products, 2, async (product) => {
-      const result = await lookupStructure(
-        product.smiles ? `smiles:${product.smiles}` : (product.query ?? product.formula ?? ""),
-      );
-      return result.record;
-    });
-    const products = resolved.filter((product): product is StructureRecord =>
-      Boolean(product?.cid && usableReactionProduct(product)),
-    );
-    if (products.length !== record.products.length) continue;
-    const balance = balanceFormulas(
-      [first.formula, second.formula],
-      products.map((product) => product.formula),
-      [firstRecord.charge ?? 0, secondRecord.charge ?? 0],
-      products.map((product) => product.charge ?? 0),
-    );
-    if (!balance) continue;
-    const recipe: ReactionRecipe = {
-      name: products.map((product) => product.name).join(" + "),
-      condition:
-        record.condition ??
-        (record.source === "rhea"
-          ? `Curated by Rhea (${record.sourceId}).`
-          : `Reported by the Open Reaction Database (${record.sourceId}).`),
-      reactants: [
-        { formula: first.formula, coefficient: balance.reactants[0] },
-        { formula: second.formula, coefficient: balance.reactants[1] },
-      ],
-      products: products.map((product, index) => ({
-        formula: product.formula,
-        coefficient: balance.products[index],
-        cid: product.cid!,
-      })),
-    };
-    const routeKey = reactionRouteKey(recipe);
-    if (seenRoutes.has(routeKey)) continue;
-    seenRoutes.add(routeKey);
-    routes.push(recipe);
-    if (routes.length === 8) return routes;
-  }
-  return routes;
-}
-
-async function queryAIReactions(
-  first: MoleculeEntity,
-  second: MoleculeEntity,
-  knownProducts: string[],
-): Promise<ReactionRecipe[]> {
-  if (aiReactionApiAvailable === false) return [];
-  try {
-    const response = await fetch(aiReactionEndpoint, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        reactants: [
-          { formula: first.formula, name: first.name },
-          { formula: second.formula, name: second.name },
-        ],
-        products: [...new Set(knownProducts)].map((formula) => ({ formula })),
-      }),
-      signal: AbortSignal.timeout(320_000),
-    });
-    if (!response.ok) {
-      if (response.status === 404 || response.status === 405 || response.status === 501) {
-        aiReactionApiAvailable = false;
-      } else {
-        let detail = "";
-        try {
-          const body = (await response.json()) as { error?: string };
-          if (typeof body.error === "string") detail = body.error;
-        } catch {}
-        aiReactionLastError = detail || `The reaction API returned ${response.status}.`;
-      }
-      return [];
-    }
-    const payload = (await response.json()) as {
-      source?: string;
-      model?: string;
-      reactions?: Array<{
-        name?: string;
-        condition?: string;
-        reactants: Array<{ formula: string; coefficient?: number }>;
-        products: Array<{ formula: string; coefficient?: number }>;
-      }>;
-    };
-    aiReactionLastError = "";
-    const routes: ReactionRecipe[] = [];
-    for (const candidate of payload.reactions ?? []) {
-      if (!Array.isArray(candidate.reactants) || !Array.isArray(candidate.products)) continue;
-      if (!candidate.reactants.length || !candidate.products.length) continue;
-      const reactantFormulas = candidate.reactants.map((reactant) => reactant.formula);
-      const productFormulas = candidate.products.map((product) => product.formula);
-      if (productFormulas.length > 3) continue;
-      const products: ReactionRecipe["products"] = [];
-      let resolvable = true;
-      for (const formula of productFormulas) {
-        const resolved = await lookupAIReactionProduct(formula, {
-          reactants: [
-            { formula: first.formula, name: first.name },
-            { formula: second.formula, name: second.name },
-          ],
-          ...(candidate.name ? { reactionName: candidate.name } : {}),
-          ...(candidate.condition ? { condition: candidate.condition } : {}),
-        });
-        if (!resolved.record?.cid || !usableReactionProduct(resolved.record)) {
-          resolvable = false;
-          break;
-        }
-        products.push({ formula, coefficient: 1, cid: resolved.record.cid });
-      }
-      if (!resolvable) continue;
-      const balance = balanceFormulas(reactantFormulas, productFormulas);
-      if (!balance) continue;
-      routes.push({
-        name: candidate.name ?? productFormulas.join(" + "),
-        condition:
-          candidate.condition ?? `AI prediction${payload.model ? ` (${payload.model})` : ""}`,
-        reactants: balance.reactants.map((coefficient, index) => ({
-          formula: reactantFormulas[index],
-          coefficient,
-        })),
-        products: products.map((product, index) => ({
-          ...product,
-          coefficient: balance.products[index],
-        })),
-      });
-    }
-    return routes;
-  } catch (error) {
-    aiReactionLastError =
-      error instanceof Error
-        ? error.name === "TimeoutError"
-          ? "The reaction API timed out."
-          : `The reaction API failed: ${error.message}`
-        : "The reaction API could not be reached.";
-    return [];
-  }
-}
-
-async function discoverAIAssistedReactions(
-  first: MoleculeEntity,
-  second: MoleculeEntity,
-  knownProducts: string[],
-) {
-  const key = [first.cid ?? first.formula, second.cid ?? second.formula]
-    .map(String)
-    .sort()
-    .join("|");
-  let pending = aiReactionCache.get(key);
-  if (!pending) {
-    pending = queryAIReactions(first, second, knownProducts);
-    aiReactionCache.set(key, pending);
-  }
-  const routes = await pending;
-  if (!routes.length) aiReactionCache.delete(key);
-  return routes;
-}
-
-function mergeReactionRoutes(routes: ReactionRecipe[]) {
-  const seen = new Set<string>();
-  const merged: ReactionRecipe[] = [];
-  for (const route of routes) {
-    const routeKey = reactionRouteKey(route);
-    if (seen.has(routeKey)) continue;
-    seen.add(routeKey);
-    merged.push(route);
-    if (merged.length === 8) break;
-  }
-  return merged;
-}
-
-function reactionEquation(recipe: ReactionRecipe) {
-  const side = (items: ReactionRecipe["reactants"]) =>
-    items
-      .map((item) => `${item.coefficient > 1 ? item.coefficient : ""}${item.formula}`)
-      .join(" + ");
-  return `${side(recipe.reactants)} → ${side(recipe.products)}`;
-}
-
-function reactionRouteKey(recipe: ReactionRecipe) {
-  return recipe.products
-    .map((product) => `${product.cid}:${product.coefficient}`)
-    .sort()
-    .join("|");
 }
 
 function AtomLearning({

@@ -1,5 +1,5 @@
 {
-  description = "Electron - reaction explorer";
+  description = "Electron - chemistry workspace";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
@@ -31,10 +31,8 @@
           bun' = (pkgs.extend nix-packages.overlays.bun-baseline).bun;
         in
         {
-          reactions = pkgs.callPackage ./devops/nix/reactions.nix { bun = bun'; };
           default = pkgs.callPackage ./devops/nix/package.nix {
             bun = bun';
-            reactions = self.packages.${system}.reactions;
           };
           docker = pkgs.callPackage ./devops/nix/docker.nix {
             app = self.packages.${system}.default;

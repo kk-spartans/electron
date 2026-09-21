@@ -1,3 +1,10 @@
+## [1.6.15](https://github.com/kk-spartans/electron/compare/v1.6.14...v1.6.15) (2026-09-21)
+
+
+### Bug Fixes
+
+* specify production branch when creating cloudflare preview project ([f558378](https://github.com/kk-spartans/electron/commit/f558378199f5caf3c71c8f0d84c1f00824d15bf1))
+
 ## [1.6.14](https://github.com/kk-spartans/electron/compare/v1.6.13...v1.6.14) (2026-09-21)
 
 

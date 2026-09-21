@@ -1827,7 +1827,7 @@ export default function Home() {
     const url = new URL(window.location.href);
     url.searchParams.set("smiles", `smiles:${validation.canonicalSmiles}`);
     try {
-      await navigator.clipboard.writeText(url.toString());
+      await navigator.clipboard.writeText(url.href);
       setValidationNotice("Molecule link copied to clipboard!");
     } catch {
       setValidationNotice("Could not copy the link to clipboard.");

@@ -33,7 +33,11 @@ body {
   overflow: hidden;
   background: var(--bg);
   color: var(--text);
-  font-family: var(--font-geist-sans), system-ui, -apple-system, sans-serif;
+  font-family:
+    var(--font-geist-sans),
+    system-ui,
+    -apple-system,
+    sans-serif;
   font-size: 13px;
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
@@ -189,7 +193,10 @@ select:focus-visible {
   font-size: 13px;
   font-weight: 500;
   cursor: pointer;
-  transition: border-color 0.18s ease, color 0.18s ease, background 0.18s ease;
+  transition:
+    border-color 0.18s ease,
+    color 0.18s ease,
+    background 0.18s ease;
 }
 
 .open-periodic:hover {
@@ -372,7 +379,9 @@ select:focus-visible {
   font-size: 13px;
   font-weight: 500;
   cursor: pointer;
-  transition: border-color 0.18s ease, background 0.18s ease;
+  transition:
+    border-color 0.18s ease,
+    background 0.18s ease;
 }
 
 .boot-screen button:hover {
@@ -631,7 +640,9 @@ select:focus-visible {
   background: var(--surface-2);
   color: var(--text);
   white-space: nowrap;
-  transition: border-color 0.15s ease, background 0.15s ease;
+  transition:
+    border-color 0.15s ease,
+    background 0.15s ease;
 }
 
 .bond-toolbar .save-canvas:hover {
@@ -788,7 +799,9 @@ select:focus-visible {
   font-size: 11px;
   font-weight: 500;
   cursor: pointer;
-  transition: border-color 0.15s ease, color 0.15s ease;
+  transition:
+    border-color 0.15s ease,
+    color 0.15s ease;
 }
 
 .reaction-cancel:hover {
@@ -997,7 +1010,9 @@ select:focus-visible {
   text-align: center;
   cursor: pointer;
   box-shadow: none;
-  transition: border-color 0.15s ease, background 0.15s ease;
+  transition:
+    border-color 0.15s ease,
+    background 0.15s ease;
 }
 
 .compound-label:hover,
@@ -1214,7 +1229,9 @@ select:focus-visible {
   background: var(--surface-2);
   border-radius: 8px;
   cursor: pointer;
-  transition: border-color 0.15s ease, background 0.15s ease;
+  transition:
+    border-color 0.15s ease,
+    background 0.15s ease;
 }
 
 .inspector-title > button:hover {
@@ -1263,7 +1280,9 @@ select:focus-visible {
   background: var(--surface-2);
   color: var(--accent);
   cursor: pointer;
-  transition: background 0.15s ease, border-color 0.15s ease;
+  transition:
+    background 0.15s ease,
+    border-color 0.15s ease;
 }
 
 .canvas-atom-controls button:hover:not(:disabled) {
@@ -1665,7 +1684,9 @@ select:focus-visible {
   font-size: 10px;
   font-weight: 600;
   cursor: pointer;
-  transition: border-color 0.15s ease, background 0.15s ease;
+  transition:
+    border-color 0.15s ease,
+    background 0.15s ease;
 }
 
 .electron-demo button:hover:not(:disabled) {
@@ -1740,7 +1761,9 @@ select:focus-visible {
   background: transparent;
   color: var(--muted);
   cursor: pointer;
-  transition: background 0.15s ease, color 0.15s ease;
+  transition:
+    background 0.15s ease,
+    color 0.15s ease;
 }
 
 .bond-summary button:hover {
@@ -1767,7 +1790,9 @@ select:focus-visible {
   font-size: 10px;
   font-weight: 500;
   cursor: pointer;
-  transition: border-color 0.15s ease, background 0.15s ease;
+  transition:
+    border-color 0.15s ease,
+    background 0.15s ease;
 }
 
 .inspector-actions button:hover {
@@ -1839,7 +1864,9 @@ select:focus-visible {
   cursor: pointer;
   font-size: 12px;
   font-weight: 500;
-  transition: border-color 0.15s ease, background 0.15s ease;
+  transition:
+    border-color 0.15s ease,
+    background 0.15s ease;
 }
 
 .remove-bond:hover {
@@ -1862,7 +1889,9 @@ select:focus-visible {
   cursor: pointer;
   font-size: 12px;
   font-weight: 500;
-  transition: border-color 0.15s ease, background 0.15s ease;
+  transition:
+    border-color 0.15s ease,
+    background 0.15s ease;
 }
 
 .compress-molecule:hover {
@@ -2025,7 +2054,9 @@ select:focus-visible {
   cursor: pointer;
   font-size: 13px;
   font-weight: 500;
-  transition: border-color 0.15s ease, background 0.15s ease;
+  transition:
+    border-color 0.15s ease,
+    background 0.15s ease;
 }
 
 .save-dialog-actions button[type="submit"] {
@@ -2185,7 +2216,9 @@ select:focus-visible {
   font-size: 12px;
   text-align: left;
   cursor: pointer;
-  transition: border-color 0.15s ease, background 0.15s ease;
+  transition:
+    border-color 0.15s ease,
+    background 0.15s ease;
 }
 
 .formula-command .structure-candidates > button:disabled {
@@ -2303,7 +2336,9 @@ select:focus-visible {
   background: var(--surface-2);
   color: var(--text);
   cursor: pointer;
-  transition: border-color 0.15s ease, background 0.15s ease;
+  transition:
+    border-color 0.15s ease,
+    background 0.15s ease;
 }
 
 .periodic-panel header > button:hover,

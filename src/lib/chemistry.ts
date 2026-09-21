@@ -81,7 +81,11 @@ export const metals = new Set(
 
 export const nobleGases = new Set(["He", "Ne", "Ar", "Kr", "Xe", "Rn", "Og"]);
 
-export function subshellsForAtom(atom: { element: string; charge: number; electronOffset: number }) {
+export function subshellsForAtom(atom: {
+  element: string;
+  charge: number;
+  electronOffset: number;
+}) {
   const data = elements[atom.element];
   return subshellsForElectronCount(data.z - atom.charge + atom.electronOffset);
 }
@@ -89,9 +93,8 @@ export function subshellsForAtom(atom: { element: string; charge: number; electr
 export function pauling(symbol: string) {
   return (
     Number(
-      (periodicTable as unknown as Record<string, { pauling_negativity?: number | string }>)[
-        symbol
-      ]?.pauling_negativity,
+      (periodicTable as unknown as Record<string, { pauling_negativity?: number | string }>)[symbol]
+        ?.pauling_negativity,
     ) || 0
   );
 }

@@ -1,5 +1,3 @@
-export type Subshell = { label: string; count: number; shell: number; kind: "s" | "p" | "d" | "f" };
-
 export type AtomNode = {
   id: number;
   element: string;
@@ -9,13 +7,11 @@ export type AtomNode = {
   electronOffset: number;
 };
 
-export type BondType = "covalent" | "ionic" | "metallic";
-
 export type BondEdge = {
   id: number;
   from: number;
   to: number;
-  type: BondType;
+  type: "covalent" | "ionic" | "metallic";
   order: 1 | 2 | 3;
 };
 

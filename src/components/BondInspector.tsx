@@ -109,11 +109,6 @@ export default function BondInspector({ bond, atoms, onClose, onRemove }: BondIn
   );
 }
 
-function moreNegative(
-  from: AtomNode,
-  to: AtomNode,
-  fromEn: number,
-  toEn: number,
-): AtomNode {
+function moreNegative(from: AtomNode, to: AtomNode, fromEn: number, toEn: number): AtomNode {
   return fromEn > toEn ? from : to;
 }

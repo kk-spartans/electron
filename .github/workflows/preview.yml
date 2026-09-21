@@ -79,7 +79,7 @@ jobs:
           docker load < result
           TAG="pr-${{ github.event.number }}-${GITHUB_SHA:0:7}"
           IMAGE="ghcr.io/${{ github.repository }}/electron-app:${TAG}"
-          docker tag electron-app:latest "$IMAGE"
+          docker tag "ghcr.io/${{ github.repository }}/electron-app:latest" "$IMAGE"
           docker push "$IMAGE"
 
       - name: Deploy preview to Cloudflare Pages

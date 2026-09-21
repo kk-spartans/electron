@@ -1,3 +1,10 @@
+## [1.6.16](https://github.com/kk-spartans/electron/compare/v1.6.15...v1.6.16) (2026-09-21)
+
+
+### Bug Fixes
+
+* deploy previews to electron-app project and comment pages plus docker tag on PR ([f13efac](https://github.com/kk-spartans/electron/commit/f13efac46e1a6d0807c15ee8025f2b8b5411487d))
+
 ## [1.6.15](https://github.com/kk-spartans/electron/compare/v1.6.14...v1.6.15) (2026-09-21)
 
 

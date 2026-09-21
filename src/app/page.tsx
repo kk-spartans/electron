@@ -3557,21 +3557,6 @@ export default function Home() {
                           {atom.charge > 0 ? `+${atom.charge}` : atom.charge}
                         </span>
                       )}
-                      <span className="atom-rotate-handle" aria-hidden="true">
-                        <span
-                          role="button"
-                          tabIndex={-1}
-                          aria-label={`Rotate ${atom.element} 15 degrees`}
-                          title="Rotate 15° (R)"
-                          onPointerDown={(event) => event.stopPropagation()}
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            rotateAtoms([atom.id], event.shiftKey ? -15 : 15);
-                          }}
-                        >
-                          ⟳
-                        </span>
-                      </span>
                     </div>
                   );
                 })}

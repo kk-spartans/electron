@@ -67,7 +67,7 @@ jobs:
       - name: Deploy preview to Cloudflare Pages
         if: github.event.action != 'closed'
         run: |
-          devenv shell wrangler pages project create electron-pr-${{ github.event.number }} || true
+          devenv shell wrangler pages project create electron-pr-${{ github.event.number }} --production-branch main || true
           devenv shell wrangler pages deployment create --project-name electron-pr-${{ github.event.number }} ./out
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}

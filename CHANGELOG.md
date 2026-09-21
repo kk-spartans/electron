@@ -1,3 +1,10 @@
+## [1.6.14](https://github.com/kk-spartans/electron/compare/v1.6.13...v1.6.14) (2026-09-21)
+
+
+### Bug Fixes
+
+* tag full ghcr image name in preview docker push ([abaff31](https://github.com/kk-spartans/electron/commit/abaff3125209e37d483f4cb4936853652798cbec))
+
 ## [1.6.13](https://github.com/kk-spartans/electron/compare/v1.6.12...v1.6.13) (2026-09-20)
 
 

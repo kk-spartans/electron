@@ -33,6 +33,29 @@ jobs:
           key: reactions-${{ runner.os }}-${{ hashFiles('devops/snapshots/*.txt', 'devops/scripts/build-reaction-index.ts', 'devops/scripts/ord-index-worker.ts') }}
           restore-keys: |
             reactions-${{ runner.os }}-
+          save-always: true
+
+      - name: Restore Nix store cache
+        uses: actions/cache@v5
+        with:
+          path: nix-store.nar.gz
+          key: nix-store-${{ runner.os }}-${{ hashFiles('devops/snapshots/*.txt', 'devops/scripts/build-reaction-index.ts', 'devops/scripts/ord-index-worker.ts', 'devops/nix/bun-deps.nix', 'devops/nix/reactions.nix', 'devops/nix/package.nix', 'devops/nix/docker.nix', 'devops/nix/arion-compose.nix', 'devops/nix/arion-pkgs.nix', 'flake.lock', 'bun.lockb') }}
+          restore-keys: |
+            nix-store-${{ runner.os }}-
+          save-always: true
+
+      - name: Import Nix store cache
+        run: |
+          if [ -f nix-store.nar.gz ]; then
+            bash devops/nix/nix-store-cache.sh import nix-store.nar.gz
+          fi
+
+      - name: Build reaction data
+        run: |
+          nix build .#reactions --print-build-logs || true
+          if [ -d result ]; then
+            cp -r result/* public/reactions/
+          fi
 
       - name: Build app
         run: |
@@ -56,7 +79,7 @@ jobs:
           docker load < result
           TAG="pr-${{ github.event.number }}-${GITHUB_SHA:0:7}"
           IMAGE="ghcr.io/${{ github.repository }}/electron-app:${TAG}"
-          docker tag electron-app:latest "$IMAGE"
+          docker tag "ghcr.io/${{ github.repository }}/electron-app:latest" "$IMAGE"
           docker push "$IMAGE"
 
       - name: Deploy preview to Cloudflare Pages

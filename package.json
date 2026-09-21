@@ -1,6 +1,6 @@
 {
   "name": "electron",
-  "version": "1.6.15",
+  "version": "1.6.16",
   "private": false,
   "scripts": {
     "dev": "bun run devops/scripts/copy-rdkit.ts && next dev",

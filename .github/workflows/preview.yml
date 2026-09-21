@@ -76,7 +76,12 @@ jobs:
         run: |
           TAG="pr-${{ github.event.number }}-${GITHUB_SHA:0:7}"
           IMAGE="ghcr.io/${{ github.repository }}/electron-app:${TAG}"
-          BODY=$(printf 'Preview ready:\n- Pages: https://pr-${{ github.event.number }}.electron-app.pages.dev\n- Docker: %s' "$IMAGE")
-          devenv shell gh pr comment ${{ github.event.number }} --body "$BODY"
+          BODY=$(printf '<!-- electron-preview -->\nPreview ready:\n- Pages: https://pr-${{ github.event.number }}.electron-app.pages.dev\n- Docker: %s' "$IMAGE")
+          COMMENT_ID=$(devenv shell gh api "repos/${{ github.repository }}/issues/${{ github.event.number }}/comments" --paginate --jq '.[] | select(.body | contains("electron-preview") or contains("Cloudflare Pages preview:")) | .id' | head -n 1)
+          if [ -n "$COMMENT_ID" ]; then
+            devenv shell gh api -X PATCH "repos/${{ github.repository }}/issues/comments/${COMMENT_ID}" -f body="$BODY"
+          else
+            devenv shell gh pr comment ${{ github.event.number }} --body "$BODY"
+          fi
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

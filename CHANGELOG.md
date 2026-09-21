@@ -1,3 +1,10 @@
+## [1.6.17](https://github.com/kk-spartans/electron/compare/v1.6.16...v1.6.17) (2026-09-21)
+
+
+### Bug Fixes
+
+* update existing preview comment instead of posting duplicates ([46b23f2](https://github.com/kk-spartans/electron/commit/46b23f23933d71012466179d98db58029f3078f3))
+
 ## [1.6.16](https://github.com/kk-spartans/electron/compare/v1.6.15...v1.6.16) (2026-09-21)
 
 

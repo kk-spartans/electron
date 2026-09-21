@@ -31,6 +31,8 @@ in
     arion
     docker-compose
     jq
+    wrangler
+    gh
   ];
 
   languages = {

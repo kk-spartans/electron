@@ -79,8 +79,7 @@ function AtomScene({
           );
           const displayedShellCount =
             shellElectrons.length + (electron.shell === shells ? sharedFrom.length : 0);
-          const angle =
-            -Math.PI / 2 + rotationRad + (position * Math.PI * 2) / displayedShellCount;
+          const angle = -Math.PI / 2 + rotationRad + (position * Math.PI * 2) / displayedShellCount;
           const radius = radii[electron.shell - 1];
           const x = (center + Math.cos(angle) * radius).toFixed(2);
           const y = (center + Math.sin(angle) * radius).toFixed(2);

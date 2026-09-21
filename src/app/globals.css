@@ -2249,7 +2249,9 @@ select:focus-visible {
   margin: -4.5px 0 0 -4.5px;
   border-radius: 50%;
   background: var(--accent);
-  box-shadow: 0 0 0 2px #000, 0 0 6px var(--accent);
+  box-shadow:
+    0 0 0 2px #000,
+    0 0 6px var(--accent);
   opacity: 0.95;
 }
 .rotation-tick {

@@ -770,7 +770,17 @@ export default function Home() {
       );
     }, 300);
     return () => window.clearTimeout(timeout);
-  }, [atoms, bonds, compressedGroups, formulaGroups, localCanvasReady, pan, scale, simplifiedAtoms, simplifiedGroups]);
+  }, [
+    atoms,
+    bonds,
+    compressedGroups,
+    formulaGroups,
+    localCanvasReady,
+    pan,
+    scale,
+    simplifiedAtoms,
+    simplifiedGroups,
+  ]);
   useEffect(() => {
     if (!validationNotice) return;
     const timeout = window.setTimeout(() => setValidationNotice(""), 4200);
@@ -3495,7 +3505,10 @@ export default function Home() {
                         <div className="symbol-badge">
                           <b>{atom.element}</b>
                           {freeSites > 0 && (
-                            <span className="bond-sites" aria-label={`${freeSites} open bond sites`}>
+                            <span
+                              className="bond-sites"
+                              aria-label={`${freeSites} open bond sites`}
+                            >
                               {Array.from({ length: Math.min(4, freeSites) }, (_, index) => {
                                 const angle =
                                   ((atom.rotation ?? 0) * Math.PI) / 180 +
@@ -3545,8 +3558,8 @@ export default function Home() {
                         </span>
                       )}
                       <span className="atom-rotate-handle" aria-hidden="true">
-                        <button
-                          type="button"
+                        <span
+                          role="button"
                           tabIndex={-1}
                           aria-label={`Rotate ${atom.element} 15 degrees`}
                           title="Rotate 15° (R)"
@@ -3557,7 +3570,7 @@ export default function Home() {
                           }}
                         >
                           ⟳
-                        </button>
+                        </span>
                       </span>
                     </div>
                   );
@@ -4267,9 +4280,7 @@ function MoleculeInspector({
       </section>
       <section>
         <h2>Orientation</h2>
-        <p>
-          Rotate the whole molecule so bond sites face the right direction for chaining.
-        </p>
+        <p>Rotate the whole molecule so bond sites face the right direction for chaining.</p>
         <div className="inspector-actions">
           <button type="button" onClick={() => onRotate?.(-15)}>
             ⟲ 15°

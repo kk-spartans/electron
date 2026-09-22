@@ -11,8 +11,6 @@ const subshellColors = {
   f: "#b4befe",
 };
 
-export { subshellColors };
-
 function AtomScene({
   symbol,
   atomicNumber,

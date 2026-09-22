@@ -1,3 +1,10 @@
+## [1.6.18](https://github.com/kk-spartans/electron/compare/v1.6.17...v1.6.18) (2026-09-22)
+
+
+### Bug Fixes
+
+* pan canvas on two-finger trackpad drag, zoom only on pinch ([#4](https://github.com/kk-spartans/electron/issues/4)) ([0962b25](https://github.com/kk-spartans/electron/commit/0962b254631b8c02f4a31279a77cdb6cc3089f23))
+
 ## [1.6.17](https://github.com/kk-spartans/electron/compare/v1.6.16...v1.6.17) (2026-09-21)
 
 

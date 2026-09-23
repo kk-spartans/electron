@@ -116,6 +116,21 @@ const aiReactionEndpoint = process.env.NEXT_PUBLIC_REACTION_API ?? "/api/reactio
 const aiStructureEndpoint =
   process.env.NEXT_PUBLIC_REACTION_API_RESOLVE ?? "/api/resolve-structure";
 
+function encodeReadableQueryValue(value: string) {
+  return value.replace(/[%#&+\\\s]/g, (character) => encodeURIComponent(character));
+}
+
+function createSpawnUrl(href: string, value: string) {
+  const base = href.split(/[?#]/, 1)[0] ?? href;
+  return `${base}?spawn=${encodeReadableQueryValue(value)}`;
+}
+
+function spawnLookupQuery(value: string) {
+  const query = value.trim();
+  if (/^(?:cid\s*:?\s*)?\d+$/i.test(query) || /^(?:cid|smiles)\s*:/i.test(query)) return query;
+  return `smiles:${query}`;
+}
+
 function sameHistorySnapshot(first: HistorySnapshot, second: HistorySnapshot) {
   return JSON.stringify(first) === JSON.stringify(second);
 }
@@ -696,16 +711,16 @@ export default function Home() {
     const restoreCanvas = async () => {
       if (!current) return;
       const params = new URLSearchParams(window.location.search);
-      const urlSmiles = params.get("smiles");
+      const requestedSpawn = params.get("spawn")?.trim() || params.get("smiles")?.trim() || "";
       try {
         const saved = await readAutosavedCanvas();
-        if (saved && !urlSmiles) {
+        if (saved && !requestedSpawn) {
           applyCanvasDocument(parseCanvasDocument(saved));
           defaultCompoundLoaded.current = true;
           setLocalCanvasReady(true);
           return;
         }
-        if (saved && urlSmiles) {
+        if (saved && requestedSpawn) {
           try {
             localStorage.removeItem(localCanvasKey);
           } catch {}
@@ -715,12 +730,12 @@ export default function Home() {
           localStorage.removeItem(localCanvasKey);
         } catch {}
       }
-      if (urlSmiles) {
-        await spawnFormulaRef.current(urlSmiles);
-      } else {
-        await spawnFormulaRef.current("fentanyl");
-      }
+      const spawned = await spawnFormulaRef.current(
+        requestedSpawn ? spawnLookupQuery(requestedSpawn) : "fentanyl",
+      );
       if (current) {
+        if (requestedSpawn && !spawned)
+          setValidationNotice("The shared molecule could not be loaded.");
         defaultCompoundLoaded.current = true;
         setLocalCanvasReady(true);
       }
@@ -918,7 +933,7 @@ export default function Home() {
         source: "canvas structure",
       }))[0];
 
-  const moleculeEntities = useMemo(() => {
+  const moleculeEntities = useMemo<MoleculeEntity[]>(() => {
     const claimed = new Set<number>();
     const groups = formulaGroups.flatMap((group) => {
       const members = group.atomIds
@@ -1795,25 +1810,37 @@ export default function Home() {
   }
 
   async function copyShareUrl() {
-    const group = formulaGroups.find((g) => g.id === selectedMolecule);
-    if (!group) {
+    const selectedIds = new Set(selected);
+    const selectedEntity =
+      moleculeEntities.find((entity) => entity.id === selectedMolecule) ??
+      moleculeEntities.find(
+        (entity) =>
+          entity.atomIds.length === selected.length &&
+          entity.atomIds.every((atomId) => selectedIds.has(atomId)),
+      );
+    const atomIds = selectedEntity?.atomIds ?? selected;
+    if (!atomIds.length) {
       setValidationNotice("Select a molecule first.");
       return;
     }
-    const groupAtomIds = new Set(group.atomIds);
-    const groupAtoms = atoms.filter((atom) => groupAtomIds.has(atom.id));
-    const groupBonds = bonds.filter(
-      (bond) => groupAtomIds.has(bond.from) && groupAtomIds.has(bond.to),
+    const atomIdSet = new Set(atomIds);
+    const selectedAtoms = atoms.filter((atom) => atomIdSet.has(atom.id));
+    const selectedBonds = bonds.filter(
+      (bond) => atomIdSet.has(bond.from) && atomIdSet.has(bond.to),
     );
+    if (selectedAtoms.length !== atomIds.length) {
+      setValidationNotice("That molecule is no longer on the canvas.");
+      return;
+    }
     const validation = await validateStructure(
-      groupAtoms.map((atom) => ({
+      selectedAtoms.map((atom) => ({
         id: atom.id,
         element: atom.element,
         x: atom.x,
         y: atom.y,
         charge: atom.charge,
       })),
-      groupBonds.map((bond) => ({
+      selectedBonds.map((bond) => ({
         from: bond.from,
         to: bond.to,
         type: bond.type,
@@ -1824,10 +1851,15 @@ export default function Home() {
       setValidationNotice("Could not generate a share link for this structure.");
       return;
     }
-    const url = new URL(window.location.href);
-    url.searchParams.set("smiles", `smiles:${validation.canonicalSmiles}`);
+    const canonicalSmiles = validation.canonicalSmiles;
+    const cid = selectedEntity?.cid;
+    const cidValue = typeof cid === "number" && Number.isInteger(cid) && cid > 0 ? String(cid) : "";
+    const spawnValue =
+      cidValue && cidValue.length <= encodeReadableQueryValue(canonicalSmiles).length
+        ? cidValue
+        : canonicalSmiles;
     try {
-      await navigator.clipboard.writeText(url.href);
+      await navigator.clipboard.writeText(createSpawnUrl(window.location.href, spawnValue));
       setValidationNotice("Molecule link copied to clipboard!");
     } catch {
       setValidationNotice("Could not copy the link to clipboard.");
@@ -2733,9 +2765,9 @@ export default function Home() {
               <button
                 type="button"
                 className="share-molecule toolbar-action"
-                title="Copy molecule link"
+                title="Copy the shortest molecule link · PubChem CID or SMILES"
                 onClick={copyShareUrl}
-                disabled={!selectedMolecule}
+                disabled={!selected.length}
               >
                 <Link /> Copy link
               </button>

@@ -21,7 +21,6 @@ import {
   type StructureRecord,
   type StructureResult,
 } from "@/lib/pubchem";
-import { lookupReportedReactions } from "@/lib/reactions";
 
 type ElementKey = string;
 type AtomNode = {
@@ -107,7 +106,6 @@ const canvasFileExtension = ".electron";
 const localCanvasKey = "electron:canvas";
 const opfsCanvasFileName = "electron-autosave.electron";
 const canvasNavigationHintKey = "electron:canvas-navigation-hint-seen";
-const reactionChoiceCache = new Map<string, Promise<ReactionRecipe[]>>();
 const structureRecognitionCache = new Map<string, Promise<StructureRecord | undefined>>();
 const aiReactionCache = new Map<string, Promise<ReactionRecipe[]>>();
 let aiReactionApiAvailable: boolean | null = null;
@@ -1092,33 +1090,10 @@ export default function Home() {
     if (!reactionCandidate || preparedReaction) return;
     const discover = async () => {
       for (const pair of reactionCandidate.pairs) {
-        const key = [pair.first.cid ?? pair.first.formula, pair.second.cid ?? pair.second.formula]
-          .map(String)
-          .sort()
-          .join("|");
-        let pending = reactionChoiceCache.get(key);
-        if (!pending) {
-          pending = discoverReactionChoices(pair.first, pair.second);
-          reactionChoiceCache.set(key, pending);
-        }
-        let routes: ReactionRecipe[] = [];
-        try {
-          routes = await pending;
-        } catch (error) {
-          aiReactionLastError =
-            error instanceof Error
-              ? `The structure lookup failed: ${error.message}`
-              : "The structure lookup failed.";
-          reactionChoiceCache.delete(key);
-        }
         if (!current) return;
-        const knownProducts = [
-          ...new Set(routes.flatMap((route) => route.products.map((product) => product.formula))),
-        ];
+        const aiRoutes = await discoverAIAssistedReactions(pair.first, pair.second, []);
         if (!current) return;
-        const aiRoutes = await discoverAIAssistedReactions(pair.first, pair.second, knownProducts);
-        if (!current) return;
-        const merged = mergeReactionRoutes([...aiRoutes, ...routes]);
+        const merged = mergeReactionRoutes(aiRoutes);
         if (merged.length) {
           reactionPairRef.current = pair;
           setReactionChoices(merged);
@@ -2795,8 +2770,8 @@ export default function Home() {
                 {reactionSearching
                   ? "Checking reactions"
                   : reactionAiError
-                    ? `No reported reaction · ${reactionAiError}`
-                    : "No reported reaction"}
+                    ? `No reaction found · ${reactionAiError}`
+                    : "No reaction found"}
               </output>
             )}
             {selectionBox && (
@@ -4322,82 +4297,6 @@ function balanceFormulas(
     reactants: normalized.slice(0, reactants.length),
     products: normalized.slice(reactants.length),
   };
-}
-
-async function mapWithConcurrency<T, R>(
-  items: T[],
-  concurrency: number,
-  task: (item: T) => Promise<R>,
-) {
-  const results = Array<R>(items.length);
-  let nextIndex = 0;
-  const worker = async () => {
-    while (nextIndex < items.length) {
-      const index = nextIndex++;
-      results[index] = await task(items[index]);
-    }
-  };
-  await Promise.all(Array.from({ length: Math.min(concurrency, items.length) }, () => worker()));
-  return results;
-}
-
-async function discoverReactionChoices(first: MoleculeEntity, second: MoleculeEntity) {
-  const resolve = async (entity: MoleculeEntity) => {
-    const result = await lookupStructure(
-      entity.cid ? String(entity.cid) : (entity.name ?? entity.formula),
-    );
-    return result.record;
-  };
-  const [firstRecord, secondRecord] = await Promise.all([resolve(first), resolve(second)]);
-  if (!firstRecord?.inchiKey || !secondRecord?.inchiKey) return [];
-  const reported = await lookupReportedReactions(
-    [firstRecord.inchiKey, secondRecord.inchiKey],
-    [first.formula, second.formula],
-  );
-  const routes: ReactionRecipe[] = [];
-  const seenRoutes = new Set<string>();
-  for (const record of reported) {
-    const resolved = await mapWithConcurrency(record.products, 2, async (product) => {
-      const result = await lookupStructure(
-        product.smiles ? `smiles:${product.smiles}` : (product.query ?? product.formula ?? ""),
-      );
-      return result.record;
-    });
-    const products = resolved.filter((product): product is StructureRecord =>
-      Boolean(product?.cid && usableReactionProduct(product)),
-    );
-    if (products.length !== record.products.length) continue;
-    const balance = balanceFormulas(
-      [first.formula, second.formula],
-      products.map((product) => product.formula),
-      [firstRecord.charge ?? 0, secondRecord.charge ?? 0],
-      products.map((product) => product.charge ?? 0),
-    );
-    if (!balance) continue;
-    const recipe: ReactionRecipe = {
-      name: products.map((product) => product.name).join(" + "),
-      condition:
-        record.condition ??
-        (record.source === "rhea"
-          ? `Curated by Rhea (${record.sourceId}).`
-          : `Reported by the Open Reaction Database (${record.sourceId}).`),
-      reactants: [
-        { formula: first.formula, coefficient: balance.reactants[0] },
-        { formula: second.formula, coefficient: balance.reactants[1] },
-      ],
-      products: products.map((product, index) => ({
-        formula: product.formula,
-        coefficient: balance.products[index],
-        cid: product.cid!,
-      })),
-    };
-    const routeKey = reactionRouteKey(recipe);
-    if (seenRoutes.has(routeKey)) continue;
-    seenRoutes.add(routeKey);
-    routes.push(recipe);
-    if (routes.length === 8) return routes;
-  }
-  return routes;
 }
 
 async function queryAIReactions(

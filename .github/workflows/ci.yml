@@ -14,8 +14,6 @@ permissions:
 jobs:
   check:
     runs-on: ubuntu-latest
-    env:
-      ORD_INDEX_WORKERS: 8
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -24,16 +22,6 @@ jobs:
       - uses: cachix/cachix-action@v16
         with:
           name: devenv
-
-      - name: Restore reaction data
-        uses: actions/cache@v5
-        with:
-          path: |
-            .cache/ord
-            public/reactions
-          key: reactions-${{ runner.os }}-${{ hashFiles('devops/snapshots/*.txt', 'devops/scripts/build-reaction-index.ts', 'devops/scripts/ord-index-worker.ts') }}
-          restore-keys: |
-            reactions-${{ runner.os }}-
 
       - name: Run checks
         run: |
@@ -72,7 +60,7 @@ jobs:
         uses: actions/cache@v5
         with:
           path: nix-store.nar.gz
-          key: nix-store-${{ runner.os }}-${{ hashFiles('devops/snapshots/*.txt', 'devops/scripts/build-reaction-index.ts', 'devops/scripts/ord-index-worker.ts', 'devops/nix/bun-deps.nix', 'devops/nix/reactions.nix', 'devops/nix/package.nix', 'devops/nix/docker.nix', 'devops/nix/arion-compose.nix', 'devops/nix/arion-pkgs.nix', 'flake.lock', 'bun.lockb') }}
+          key: nix-store-${{ runner.os }}-${{ hashFiles('devops/nix/bun-deps.nix', 'devops/nix/package.nix', 'devops/nix/docker.nix', 'devops/nix/arion-compose.nix', 'devops/nix/arion-pkgs.nix', 'flake.lock', 'bun.lock') }}
           restore-keys: |
             nix-store-${{ runner.os }}-
           save-always: true

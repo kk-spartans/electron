@@ -1,3 +1,11 @@
+## [1.8.1](https://github.com/kk-spartans/electron/compare/v1.8.0...v1.8.1) (2026-10-14)
+
+
+### Bug Fixes
+
+* oxfmt formatting and react-doctor nested interactive element ([4ec7b5c](https://github.com/kk-spartans/electron/commit/4ec7b5c00aabeec9254876a0000641c4639e0a5d))
+* remove nested interactive rotate handle, clean up CSS ([b33ef3f](https://github.com/kk-spartans/electron/commit/b33ef3f6a49c8e6f1d18f06c41b668b946f58800))
+
 # [1.8.0](https://github.com/kk-spartans/electron/compare/v1.7.0...v1.8.0) (2026-10-14)
 
 

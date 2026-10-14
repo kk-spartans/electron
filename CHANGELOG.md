@@ -1,3 +1,10 @@
+# [1.8.0](https://github.com/kk-spartans/electron/compare/v1.7.0...v1.8.0) (2026-10-14)
+
+
+### Features
+
+* accept bare SMILES in the molecule input ([#2](https://github.com/kk-spartans/electron/issues/2)) ([25ad7cc](https://github.com/kk-spartans/electron/commit/25ad7ccb3b707c136a9918c84f6798b932720e63))
+
 # [1.7.0](https://github.com/kk-spartans/electron/compare/v1.6.18...v1.7.0) (2026-10-14)
 
 

@@ -37,7 +37,7 @@ const steps: Step[] = [
   {
     name: "app-prepare",
     command: "bun",
-    args: ["run", "prepare:app"],
+    args: ["run", "devops/scripts/copy-rdkit.ts"],
   },
   {
     name: "build",

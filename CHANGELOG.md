@@ -1,3 +1,32 @@
+## [1.8.2](https://github.com/kk-spartans/electron/compare/v1.8.1...v1.8.2) (2026-10-14)
+
+
+### Bug Fixes
+
+* restore searxng in arion-compose, drop dead limiter.toml mount ([63ce9d6](https://github.com/kk-spartans/electron/commit/63ce9d65cb60696454d8d5ba8e9732e6df4127e8))
+
+## [1.8.1](https://github.com/kk-spartans/electron/compare/v1.8.0...v1.8.1) (2026-10-14)
+
+
+### Bug Fixes
+
+* oxfmt formatting and react-doctor nested interactive element ([4ec7b5c](https://github.com/kk-spartans/electron/commit/4ec7b5c00aabeec9254876a0000641c4639e0a5d))
+* remove nested interactive rotate handle, clean up CSS ([b33ef3f](https://github.com/kk-spartans/electron/commit/b33ef3f6a49c8e6f1d18f06c41b668b946f58800))
+
+# [1.8.0](https://github.com/kk-spartans/electron/compare/v1.7.0...v1.8.0) (2026-10-14)
+
+
+### Features
+
+* accept bare SMILES in the molecule input ([#2](https://github.com/kk-spartans/electron/issues/2)) ([25ad7cc](https://github.com/kk-spartans/electron/commit/25ad7ccb3b707c136a9918c84f6798b932720e63))
+
+# [1.7.0](https://github.com/kk-spartans/electron/compare/v1.6.18...v1.7.0) (2026-10-14)
+
+
+### Features
+
+* auto-angle toggle and pinnable ionic charges ([#5](https://github.com/kk-spartans/electron/issues/5)) ([c37ace0](https://github.com/kk-spartans/electron/commit/c37ace03cd90661b69456278761095999b530f64))
+
 ## [1.6.18](https://github.com/kk-spartans/electron/compare/v1.6.17...v1.6.18) (2026-09-22)
 
 

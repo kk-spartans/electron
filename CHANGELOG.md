@@ -1,3 +1,10 @@
+## [1.8.2](https://github.com/kk-spartans/electron/compare/v1.8.1...v1.8.2) (2026-10-14)
+
+
+### Bug Fixes
+
+* restore searxng in arion-compose, drop dead limiter.toml mount ([63ce9d6](https://github.com/kk-spartans/electron/commit/63ce9d65cb60696454d8d5ba8e9732e6df4127e8))
+
 ## [1.8.1](https://github.com/kk-spartans/electron/compare/v1.8.0...v1.8.1) (2026-10-14)
 
 

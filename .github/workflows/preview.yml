@@ -25,6 +25,7 @@ jobs:
           name: devenv
 
       - name: Restore Nix store cache
+        if: github.event.action != 'closed'
         uses: actions/cache@v5
         with:
           path: nix-store.nar.gz
@@ -34,21 +35,25 @@ jobs:
           save-always: true
 
       - name: Import Nix store cache
+        if: github.event.action != 'closed'
         run: |
           if [ -f nix-store.nar.gz ]; then
             bash devops/nix/nix-store-cache.sh import nix-store.nar.gz
           fi
 
       - name: Build app
+        if: github.event.action != 'closed'
         run: |
           nix profile add nixpkgs#devenv
           devenv shell bun install
           devenv tasks run electron:check
 
       - name: Set up Docker Buildx
+        if: github.event.action != 'closed'
         uses: docker/setup-buildx-action@v3
 
       - name: Log in to GitHub Container Registry
+        if: github.event.action != 'closed'
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
@@ -56,6 +61,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build and push Docker image
+        if: github.event.action != 'closed'
         run: |
           nix build .#docker --print-build-logs
           docker load < result
@@ -85,3 +91,16 @@ jobs:
           fi
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Delete preview deployment on PR close
+        if: github.event.action == 'closed'
+        run: |
+          nix profile add nixpkgs#devenv
+          devenv shell wrangler pages deployment list --project-name electron-app --environment preview --json \
+            | python3 -c 'import json,os,sys; [print(d["Id"]) for d in json.load(sys.stdin) if d.get("Branch") == os.environ["BRANCH"]]' \
+            | while read -r ID; do
+              devenv shell wrangler pages deployment delete "$ID" --project-name electron-app --force
+            done
+        env:
+          BRANCH: pr-${{ github.event.number }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}

@@ -37,6 +37,28 @@ function encodePathSegment(value: string) {
   );
 }
 
+function looksLikeBareSMILES(value: string) {
+  if (/\s/.test(value) || value.length < 2) return false;
+  if (!/^[A-Za-z0-9[\]()=#+\-\\/\\@.%:*$]+$/.test(value)) return false;
+  // Characters that never appear in plain formulas or typical compound names.
+  if (/[[\]=#@\\+]/.test(value) || value.includes("/")) return true;
+  // Parentheses/bond symbols/digits outside a plain formula shape.
+  if (/[()\-%.:*]/.test(value)) return true;
+  // Aromatic lowercase atoms (c, n, o, p, s) or ring closures mixed with letters.
+  if (/[bcnops]/.test(value)) return true;
+  if (/\d/.test(value)) return true;
+  return false;
+}
+
+async function resolveCid(inputPath: string) {
+  const resolution = (await pubchem(`compound/${inputPath}/cids/JSON`)) as {
+    IdentifierList?: { CID?: number[] };
+  };
+  const cid = resolution.IdentifierList?.CID?.[0];
+  if (!cid) throw new Error("PubChem could not resolve that identifier");
+  return cid;
+}
+
 function retryDelay(response: Response, attempt: number) {
   const retryAfter = Number(response.headers.get("retry-after"));
   return Number.isFinite(retryAfter) && retryAfter > 0
@@ -78,7 +100,7 @@ async function pubchem(path: string) {
 export async function lookupStructure(query: string): Promise<StructureResult> {
   const raw = query.normalize("NFKC").trim(),
     compact = raw.replace(/\s+/g, "");
-  if (!raw) return { error: "Enter a formula, compound name, PubChem CID, or prefixed SMILES." };
+  if (!raw) return { error: "Enter a formula, compound name, PubChem CID, or SMILES." };
   try {
     const formulaTokens = [...compact.matchAll(/([A-Z][a-z]?)(\d*)/g)];
     const formula =
@@ -91,16 +113,32 @@ export async function lookupStructure(query: string): Promise<StructureResult> {
     if (cidMatch) cid = Number(cidMatch[1]);
     else if (/^smiles\s*:/i.test(raw))
       inputPath = `smiles/${encodePathSegment(raw.replace(/^smiles\s*:/i, "").trim())}`;
-    else if (!formula) inputPath = `name/${encodePathSegment(raw)}`;
-    else {
-      const search = (await pubchem(
-        `compound/fastformula/${encodePathSegment(formula)}/cids/JSON?MaxRecords=25`,
-      )) as { IdentifierList?: { CID?: number[] } };
-      const matches = search.IdentifierList?.CID ?? [];
-      if (!matches.length) return { error: "PubChem has no structure for that formula." };
-      if (matches.length > 1) {
+    else if (!formula) {
+      if (looksLikeBareSMILES(raw)) {
+        const smilesPath = `smiles/${encodePathSegment(raw)}`;
+        try {
+          cid = await resolveCid(smilesPath);
+        } catch {
+          inputPath = `name/${encodePathSegment(raw)}`;
+        }
+      } else inputPath = `name/${encodePathSegment(raw)}`;
+    } else {
+      let formulaMatches: number[] = [];
+      try {
+        const search = (await pubchem(
+          `compound/fastformula/${encodePathSegment(formula)}/cids/JSON?MaxRecords=25`,
+        )) as { IdentifierList?: { CID?: number[] } };
+        formulaMatches = search.IdentifierList?.CID ?? [];
+      } catch {
+        formulaMatches = [];
+      }
+      if (!formulaMatches.length) {
+        // Strings like "CCO" parse as formulas but are usually pasted SMILES.
+        if (looksLikeBareSMILES(raw)) inputPath = `smiles/${encodePathSegment(raw)}`;
+        else return { error: "PubChem has no structure for that formula." };
+      } else if (formulaMatches.length > 1) {
         const candidates = (await pubchem(
-          `compound/cid/${matches.join(",")}/property/Title,MolecularFormula/JSON`,
+          `compound/cid/${formulaMatches.join(",")}/property/Title,MolecularFormula/JSON`,
         )) as {
           PropertyTable?: {
             Properties?: Array<{ CID: number; Title?: string; MolecularFormula?: string }>;
@@ -114,14 +152,18 @@ export async function lookupStructure(query: string): Promise<StructureResult> {
             formula: item.MolecularFormula ?? formula,
           })),
         };
-      }
-      cid = matches[0];
+      } else cid = formulaMatches[0];
     }
-    if (!cid) {
-      const resolution = (await pubchem(`compound/${inputPath!}/cids/JSON`)) as {
-        IdentifierList?: { CID?: number[] };
-      };
-      cid = resolution.IdentifierList?.CID?.[0];
+    if (!cid && inputPath) {
+      try {
+        cid = await resolveCid(inputPath);
+      } catch (error) {
+        // A bare SMILES pasted without the `smiles:` prefix first resolves as a
+        // name; retry it as SMILES before giving up.
+        if (inputPath.startsWith("name/") && looksLikeBareSMILES(raw)) {
+          cid = await resolveCid(`smiles/${encodePathSegment(raw)}`);
+        } else throw error;
+      }
       if (!cid) throw new Error("PubChem could not resolve that identifier");
     }
     const data = (await pubchem(`compound/cid/${cid}/JSON?record_type=2d`)) as {

@@ -1,3 +1,10 @@
+## [1.8.3](https://github.com/kk-spartans/electron/compare/v1.8.2...v1.8.3) (2026-10-14)
+
+
+### Bug Fixes
+
+* **ci:** delete Cloudflare Pages preview on PR close ([5f6fa9a](https://github.com/kk-spartans/electron/commit/5f6fa9a4e76bd3efd32a91d8c81a2bc5baa5d6b1))
+
 ## [1.8.2](https://github.com/kk-spartans/electron/compare/v1.8.1...v1.8.2) (2026-10-14)
 
 

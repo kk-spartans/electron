@@ -32,6 +32,7 @@ type AtomNode = {
   charge: number;
   electronOffset: number;
   rotation: number;
+  chargePinned?: boolean;
 };
 type BondType = "covalent" | "ionic" | "metallic";
 type BondEdge = { id: number; from: number; to: number; type: BondType; order: 1 | 2 | 3 };
@@ -100,6 +101,7 @@ type CanvasDocument = {
   simplifiedGroupIds?: number[];
   simplifiedAtomIds?: number[];
   view: { pan: { x: number; y: number }; scale: number };
+  prefs?: { autoAngle?: boolean };
 };
 type CanvasFileHandle = {
   createWritable: () => Promise<{
@@ -206,7 +208,8 @@ function parseCanvasDocument(contents: string): CanvasDocument {
       !Number.isFinite(atom.y) ||
       !Number.isFinite(atom.charge) ||
       !Number.isFinite(atom.electronOffset) ||
-      (atom.rotation !== undefined && !Number.isFinite(atom.rotation))
+      (atom.rotation !== undefined && !Number.isFinite(atom.rotation)) ||
+      (atom.chargePinned !== undefined && typeof atom.chargePinned !== "boolean")
     )
       throw new Error("The canvas file contains an invalid atom.");
     atomIds.add(atom.id);
@@ -352,6 +355,7 @@ function ionicAcceptanceLimit(symbol: string) {
 }
 
 function applyIonicCharges(atomList: AtomNode[], bondList: BondEdge[]) {
+  const pinned = new Map(atomList.map((atom) => [atom.id, atom.chargePinned ? atom.charge : 0]));
   const charges = new Map(atomList.map((atom) => [atom.id, 0]));
   bondList
     .filter((bond) => bond.type === "ionic")
@@ -377,7 +381,10 @@ function applyIonicCharges(atomList: AtomNode[], bondList: BondEdge[]) {
       charges.set(donor.id, (charges.get(donor.id) ?? 0) + bond.order);
       charges.set(receiver.id, (charges.get(receiver.id) ?? 0) - bond.order);
     });
-  return atomList.map((atom) => ({ ...atom, charge: charges.get(atom.id) ?? 0 }));
+  return atomList.map((atom) => ({
+    ...atom,
+    charge: atom.chargePinned ? (pinned.get(atom.id) ?? atom.charge) : (charges.get(atom.id) ?? 0),
+  }));
 }
 
 const electronSubshellCache = new Map<number, Subshell[]>();
@@ -498,6 +505,12 @@ export default function Home() {
   const [saveFileName, setSaveFileName] = useState("electron-canvas");
   const [sidebarWidths, setSidebarWidths] = useState({ left: 228, right: 336 });
   const [periodicOpen, setPeriodicOpen] = useState(false);
+  const [autoAngle, setAutoAngle] = useState(true);
+  useEffect(() => {
+    try {
+      if (localStorage.getItem("electron:auto-angle") === "off") setAutoAngle(false);
+    } catch {}
+  }, []);
   const periodicPresence = useAnimatedPresence(periodicOpen);
   const saveDialogPresence = useAnimatedPresence(saveDialogOpen);
   const formulaPresence = useAnimatedPresence(formulaOpen);
@@ -793,12 +806,14 @@ export default function Home() {
           simplifiedGroupIds: [...simplifiedGroups],
           simplifiedAtomIds: [...simplifiedAtoms],
           view: { pan, scale },
+          prefs: { autoAngle },
         } satisfies CanvasDocument),
       );
     }, 300);
     return () => window.clearTimeout(timeout);
   }, [
     atoms,
+    autoAngle,
     bonds,
     compressedGroups,
     formulaGroups,
@@ -808,6 +823,11 @@ export default function Home() {
     simplifiedAtoms,
     simplifiedGroups,
   ]);
+  useEffect(() => {
+    try {
+      localStorage.setItem("electron:auto-angle", autoAngle ? "on" : "off");
+    } catch {}
+  }, [autoAngle]);
   useEffect(() => {
     if (!validationNotice) return;
     const timeout = window.setTimeout(() => setValidationNotice(""), 4200);
@@ -1617,12 +1637,12 @@ export default function Home() {
         const lower = event.key.toLowerCase();
         if (lower === "r" || lower === "[") {
           event.preventDefault();
-          rotateSelection(event.shiftKey ? -15 : 15);
+          rotateSelection(event.shiftKey ? -90 : 90);
           return;
         }
         if (lower === "]") {
           event.preventDefault();
-          rotateSelection(15);
+          rotateSelection(90);
           return;
         }
       }
@@ -1979,6 +1999,7 @@ export default function Home() {
       simplifiedGroupIds: [...simplifiedGroups],
       simplifiedAtomIds: [...simplifiedAtoms],
       view: { pan, scale },
+      prefs: { autoAngle },
     };
   }
 
@@ -2002,6 +2023,7 @@ export default function Home() {
     const restoredSimplifiedAtoms = new Set(document.simplifiedAtomIds ?? []);
     simplifiedAtomsRef.current = restoredSimplifiedAtoms;
     setSimplifiedAtoms(restoredSimplifiedAtoms);
+    if (typeof document.prefs?.autoAngle === "boolean") setAutoAngle(document.prefs.autoAngle);
     setPan(document.view.pan);
     setScale(Math.min(2.5, Math.max(0.25, document.view.scale)));
     setSelected([]);
@@ -2616,6 +2638,63 @@ export default function Home() {
     setSelectedBond(null);
   }
 
+  function setAtomCharge(id: number, charge: number) {
+    const clamped = Math.max(-3, Math.min(3, Math.round(charge)));
+    // Recompute unpinned atoms from ionic bonds, then enforce this pin.
+    const recomputed = applyIonicCharges(
+      atomsRef.current.map((atom) =>
+        atom.id === id ? { ...atom, charge: clamped, chargePinned: true } : atom,
+      ),
+      bondsRef.current,
+    );
+    const merged = recomputed.map((atom) =>
+      atom.id === id ? { ...atom, charge: clamped, chargePinned: true } : atom,
+    );
+    atomsRef.current = merged;
+    setAtoms(merged);
+    void validateStructure(merged, bondsRef.current).then((result) => {
+      if (!result.valid)
+        setValidationNotice(
+          "That charge is kept, but RDKit cannot sanitize the resulting structure.",
+        );
+    });
+  }
+
+  function toggleChargePin(id: number) {
+    const target = atomsRef.current.find((atom) => atom.id === id);
+    if (!target) return;
+    if (target.chargePinned) {
+      const unpinned = atomsRef.current.map((atom) =>
+        atom.id === id ? { ...atom, chargePinned: false } : atom,
+      );
+      const charged = applyIonicCharges(unpinned, bondsRef.current);
+      atomsRef.current = charged;
+      setAtoms(charged);
+    } else {
+      const pinned = atomsRef.current.map((atom) =>
+        atom.id === id ? { ...atom, chargePinned: true } : atom,
+      );
+      atomsRef.current = pinned;
+      setAtoms(pinned);
+      setValidationNotice(
+        `${target.element} will now keep its ${target.charge > 0 ? `+${target.charge}` : target.charge === 0 ? "neutral" : target.charge} charge when bonds change.`,
+      );
+    }
+  }
+
+  function changeBondType(id: number, type: BondType) {
+    const nextBonds = bondsRef.current.map((bond) => (bond.id === id ? { ...bond, type } : bond));
+    const charged = applyIonicCharges(atomsRef.current, nextBonds);
+    bondsRef.current = nextBonds;
+    atomsRef.current = charged;
+    setBonds(nextBonds);
+    setAtoms(charged);
+    void validateStructure(charged, nextBonds).then((result) => {
+      if (!result.valid)
+        setValidationNotice("Bond type changed, but RDKit cannot sanitize this structure.");
+    });
+  }
+
   function idealAngle(symbol: string, neighborCount: number, bondOrder: number) {
     if (symbol === "O" && neighborCount === 2) return 104.5;
     if (symbol === "N" && neighborCount === 3) return 107;
@@ -3062,23 +3141,36 @@ export default function Home() {
                 {simplifiedGroups.size || simplifiedAtoms.size ? <ArrowsOut /> : <ArrowsIn />}
                 {simplifiedGroups.size || simplifiedAtoms.size ? "Full atoms" : "Symbols"}
               </button>
+              <button
+                type="button"
+                className={`save-canvas toolbar-action${autoAngle ? " toggled" : ""}`}
+                aria-pressed={autoAngle}
+                title={
+                  autoAngle
+                    ? "Auto-angle is on: newly bonded atoms snap to ideal geometry. Click to turn off."
+                    : "Auto-angle is off: newly bonded atoms stay where dropped. Click to turn on."
+                }
+                onClick={() => setAutoAngle((current) => !current)}
+              >
+                ∠ Auto-angle {autoAngle ? "on" : "off"}
+              </button>
               {(selected.length > 1 || activeMolecule) && (
                 <span className="toolbar-rotate-group" role="group" aria-label="Rotate selection">
                   <button
                     type="button"
                     className="toolbar-action"
-                    title="Rotate selection −15° (Shift+R)"
-                    onClick={() => rotateSelection(-15)}
+                    title="Rotate selection −90° (Shift+R)"
+                    onClick={() => rotateSelection(-90)}
                   >
-                    ⟲ 15°
+                    ⟲ 90°
                   </button>
                   <button
                     type="button"
                     className="toolbar-action"
-                    title="Rotate selection +15° (R)"
-                    onClick={() => rotateSelection(15)}
+                    title="Rotate selection +90° (R)"
+                    onClick={() => rotateSelection(90)}
                   >
-                    ⟳ 15°
+                    ⟳ 90°
                   </button>
                 </span>
               )}
@@ -3590,7 +3682,7 @@ export default function Home() {
                         if (movedIds.length === 1)
                           void settleAtom(movedIds[0])
                             .then((valid) => {
-                              if (valid) relaxBondGeometry(movedIds[0]);
+                              if (valid && autoAngle) relaxBondGeometry(movedIds[0]);
                             })
                             .catch(() => {});
                       }}
@@ -3654,8 +3746,14 @@ export default function Home() {
                         <span
                           className={`atom-charge ${atom.charge > 0 ? "positive" : "negative"}`}
                           style={{ transform: `scale(${scale})` }}
+                          title={
+                            atom.chargePinned
+                              ? "Pinned ionic charge — kept when bonds change"
+                              : undefined
+                          }
                         >
                           {atom.charge > 0 ? `+${atom.charge}` : atom.charge}
+                          {atom.chargePinned ? " ⚲" : ""}
                         </span>
                       )}
                     </div>
@@ -3806,6 +3904,7 @@ export default function Home() {
                 atoms={atoms}
                 onClose={() => setSelectedBond(null)}
                 onRemove={() => removeBond(activeBond.id)}
+                onTypeChange={(type) => changeBondType(activeBond.id, type)}
               />
             ) : activeMolecule ? (
               <MoleculeInspector
@@ -3835,8 +3934,8 @@ export default function Home() {
                 <section className="inspector-orientation">
                   <h2>Orientation · {Math.round(active.rotation ?? 0)}°</h2>
                   <div className="orientation-controls">
-                    <button type="button" onClick={() => rotateAtoms([active.id], -15)}>
-                      ⟲ 15°
+                    <button type="button" onClick={() => rotateAtoms([active.id], -90)}>
+                      ⟲ 90°
                     </button>
                     <input
                       type="range"
@@ -3847,8 +3946,8 @@ export default function Home() {
                       aria-label="Atom rotation in degrees"
                       onChange={(event) => setAtomRotation(active.id, Number(event.target.value))}
                     />
-                    <button type="button" onClick={() => rotateAtoms([active.id], 15)}>
-                      ⟳ 15°
+                    <button type="button" onClick={() => rotateAtoms([active.id], 90)}>
+                      ⟳ 90°
                     </button>
                   </div>
                   <div className="orientation-actions">
@@ -3949,6 +4048,58 @@ export default function Home() {
                         : `a ${Math.abs(active.charge)}− anion after gaining electrons`}
                       .
                     </p>
+                  )}
+                </section>
+                <section>
+                  <h2>Ionic charge</h2>
+                  <p>
+                    Set a charge to keep — for example O− in HO—P—O− — and it survives rebonding.
+                    Unpinned atoms are recalculated from ionic bonds.
+                  </p>
+                  <div className="charge-controls">
+                    <button
+                      type="button"
+                      aria-label="Decrease charge"
+                      onClick={() => setAtomCharge(active.id, active.charge - 1)}
+                    >
+                      −
+                    </button>
+                    <output aria-label="Formal charge">
+                      {active.charge > 0
+                        ? `+${active.charge}`
+                        : active.charge === 0
+                          ? "0 (neutral)"
+                          : `${active.charge}`}
+                    </output>
+                    <button
+                      type="button"
+                      aria-label="Increase charge"
+                      onClick={() => setAtomCharge(active.id, active.charge + 1)}
+                    >
+                      +
+                    </button>
+                    <button
+                      type="button"
+                      className={active.chargePinned ? "toggled" : ""}
+                      aria-pressed={Boolean(active.chargePinned)}
+                      title={
+                        active.chargePinned
+                          ? "Pinned: this charge is kept when bonds change. Click to unpin."
+                          : "Click to pin the current charge so it survives rebonding."
+                      }
+                      onClick={() => toggleChargePin(active.id)}
+                    >
+                      {active.chargePinned ? "Pinned" : "Pin charge"}
+                    </button>
+                  </div>
+                  {active.chargePinned && (
+                    <button
+                      type="button"
+                      className="remove-bond"
+                      onClick={() => setAtomCharge(active.id, 0)}
+                    >
+                      Clear to neutral (keep pinned)
+                    </button>
                   )}
                 </section>
                 <section>
@@ -4368,11 +4519,11 @@ function MoleculeInspector({
         <h2>Orientation</h2>
         <p>Rotate the whole molecule so bond sites face the right direction for chaining.</p>
         <div className="inspector-actions">
-          <button type="button" onClick={() => onRotate?.(-15)}>
-            ⟲ 15°
+          <button type="button" onClick={() => onRotate?.(-90)}>
+            ⟲ 90°
           </button>
-          <button type="button" onClick={() => onRotate?.(15)}>
-            ⟳ 15°
+          <button type="button" onClick={() => onRotate?.(90)}>
+            ⟳ 90°
           </button>
         </div>
       </section>
@@ -4398,11 +4549,13 @@ function BondInspector({
   atoms,
   onClose,
   onRemove,
+  onTypeChange,
 }: {
   bond: BondEdge;
   atoms: AtomNode[];
   onClose: () => void;
   onRemove: () => void;
+  onTypeChange: (type: BondType) => void;
 }) {
   const from = atoms.find((atom) => atom.id === bond.from)!;
   const to = atoms.find((atom) => atom.id === bond.to)!;
@@ -4498,6 +4651,25 @@ function BondInspector({
             </>
           )}
         </p>
+      </section>
+      <section>
+        <h2>Bond type</h2>
+        <p>Override the inferred type to keep a bond covalent or intentionally ionic.</p>
+        <div className="charge-controls" role="group" aria-label="Bond type">
+          {(["covalent", "ionic", "metallic"] as const).map((type) => (
+            <button
+              key={type}
+              type="button"
+              className={bond.type === type ? "toggled" : ""}
+              aria-pressed={bond.type === type}
+              onClick={() => {
+                if (bond.type !== type) onTypeChange(type);
+              }}
+            >
+              {type}
+            </button>
+          ))}
+        </div>
       </section>
       <button type="button" className="remove-bond" onClick={onRemove}>
         <Trash /> Remove bond

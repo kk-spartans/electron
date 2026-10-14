@@ -1,3 +1,10 @@
+# [1.7.0](https://github.com/kk-spartans/electron/compare/v1.6.18...v1.7.0) (2026-10-14)
+
+
+### Features
+
+* auto-angle toggle and pinnable ionic charges ([#5](https://github.com/kk-spartans/electron/issues/5)) ([c37ace0](https://github.com/kk-spartans/electron/commit/c37ace03cd90661b69456278761095999b530f64))
+
 ## [1.6.18](https://github.com/kk-spartans/electron/compare/v1.6.17...v1.6.18) (2026-09-22)
 
 

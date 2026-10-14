@@ -6,15 +6,6 @@ The code here is messy, I didn't read it. It was supposed to be just a fun expir
 
 Try it out [here](https://electron-app.pages.dev).
 
-## Included in the static index
-
-| Source                 | Coverage                                                                                                                        | Imported data                                             |
-| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------- |
-| Open Reaction Database | Organic synthesis, medicinal chemistry, patents, experimental procedures                                                        | Structured reactants, products, and ORD provenance        |
-| Rhea                   | Curated biochemical and enzyme-catalyzed reactions                                                                              | Directed reaction SMILES and Rhea identifiers             |
-| Cantera mechanisms     | Combustion, gas-phase kinetics, electrochemistry, and surface mechanisms represented by the mechanisms distributed with Cantera | Elementary reactions, reversibility, mechanism provenance |
-| USGS PHREEQC databases | Aqueous acid-base chemistry, ion complexation, redox, mineral dissolution/precipitation, exchange, and surface chemistry        | Equilibrium equations and database provenance             |
-
 ## Quick start (Docker)
 
 Pulls the prebuilt image from GHCR, no Nix required:
@@ -38,7 +29,7 @@ The site lives at [http://localhost:8080](http://localhost:8080), with AI-predic
 
 ### How it works
 
-Cloudflare Pages serves the static export, while the Docker image runs the same static export behind a tiny Bun server (`electron-server`) that also listens on `/api/reactions` and `/api/resolve-structure`. When the site can reach those endpoints it augments the static index with model-predicted reactions; when it cannot (e.g. on Cloudflare Pages), it falls back to the static index alone. The server caches model responses on disk (`REACTION_CACHE_DIR`), so repeated requests for the same species never hit the model provider twice.
+Cloudflare Pages serves the static export (no reactions there), while the Docker image runs the same static export behind a tiny Bun server (`electron-server`) that also listens on `/api/reactions` and `/api/resolve-structure`. When the site can reach those endpoints it offers model-predicted reactions; when it cannot (e.g. on Cloudflare Pages), reactions are unavailable. The server caches model responses on disk (`REACTION_CACHE_DIR`), so repeated requests for the same species never hit the model provider twice.
 
 Alongside the app runs a SearXNG sidecar (configured via `settings.yml`, which enables its JSON API). The model gets a `web_search` tool, and when it wants current or obscure chemistry info it calls it; the server forwards the query to SearXNG, feeds the top results back into the conversation, and lets the model continue — up to five rounds per request.
 
